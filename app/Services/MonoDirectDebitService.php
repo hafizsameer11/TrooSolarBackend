@@ -116,37 +116,25 @@ class MonoDirectDebitService
 
         $startDate = now()->startOfDay();
         $endDate = now()->addMonths($duration)->startOfDay();
-        $firstDebitDate = ! empty($calc->repayment_date)
-            ? Carbon::parse($calc->repayment_date)->startOfDay()
-            : now()->addMonth()->startOfDay();
 
         $reference = 'troosolar_mandate_' . $user->id . '_' . $mono->id . '_' . time();
         $redirectPath = $loanApplicationId
             ? '/bnpl-loans/app-' . $loanApplicationId . '?mandate=1'
             : '/bnpl-loans?mandate=1';
 
-        $payload = [
-            'amount' => $totalExposureKobo,
-            'type' => 'recurring-debit',
-            'method' => 'mandate',
-            'mandate_type' => 'emandate',
-            'debit_type' => 'variable',
-            'description' => 'TrooSolar BNPL loan repayments',
-            'reference' => $reference,
-            'customer' => $this->buildMandateCustomerPayload($customerId),
-            'start_date' => $startDate->format('Y-m-d'),
-            'end_date' => $endDate->format('Y-m-d'),
-            'frequency' => 'monthly',
-            'retrial_frequency' => 3,
-            'initial_debit_date' => $firstDebitDate->format('Y-m-d'),
-            'grace_period' => 3,
-            'minimum_due' => 0,
-            'redirect_url' => FrontendUrl::base() . $redirectPath,
-            'meta' => [
+        $payload = $this->buildMandateInitiatePayload(
+            totalExposureKobo: $totalExposureKobo,
+            customerId: $customerId,
+            reference: $reference,
+            redirectUrl: FrontendUrl::base() . $redirectPath,
+            startDate: $startDate,
+            endDate: $endDate,
+            linked: $linked,
+            meta: [
                 'mono_calculation_id' => $mono->id,
                 'user_id' => $user->id,
-            ],
-        ];
+            ]
+        );
 
         $init = $this->monoService->initiateDirectDebitMandate($payload);
         $data = is_array($init['data'] ?? null) ? $init['data'] : $init;
@@ -495,15 +483,86 @@ class MonoDirectDebitService
     }
 
     /**
-     * Mono POST /v2/payments/initiate (mandate) — customer object is id only.
+     * POST /v2/payments/initiate — mandate authorisation (Mono docs, May 2026).
      *
-     * @return array<string, string>
+     * @param  array<string, mixed>  $meta
+     * @return array<string, mixed>
      */
-    private function buildMandateCustomerPayload(string $customerId): array
-    {
-        return [
-            'id' => $customerId,
+    private function buildMandateInitiatePayload(
+        int $totalExposureKobo,
+        string $customerId,
+        string $reference,
+        string $redirectUrl,
+        Carbon $startDate,
+        Carbon $endDate,
+        UserMonoAccount $linked,
+        array $meta
+    ): array {
+        $payload = [
+            'amount' => $totalExposureKobo,
+            'type' => 'recurring-debit',
+            'method' => 'mandate',
+            'mandate_type' => 'emandate',
+            'debit_type' => 'variable',
+            'description' => 'TrooSolar BNPL loan repayments',
+            'reference' => $reference,
+            'redirect_url' => $redirectUrl,
+            'customer' => [
+                'id' => $customerId,
+            ],
+            'start_date' => $startDate->format('Y-m-d'),
+            'end_date' => $endDate->format('Y-m-d'),
+            'meta' => $meta,
         ];
+
+        $bank = $this->resolveLinkedBankDetails($linked);
+        if (! empty($bank['account_number'])) {
+            $payload['account_number'] = $bank['account_number'];
+        }
+        if (! empty($bank['bank_code'])) {
+            $payload['bank_code'] = $bank['bank_code'];
+        }
+
+        return $payload;
+    }
+
+    /**
+     * @return array{account_number: ?string, bank_code: ?string}
+     */
+    private function resolveLinkedBankDetails(UserMonoAccount $linked): array
+    {
+        if (! $linked->mono_account_id) {
+            return ['account_number' => null, 'bank_code' => null];
+        }
+
+        try {
+            $response = $this->monoService->getAccountDetails($linked->mono_account_id);
+            $data = is_array($response['data'] ?? null) ? $response['data'] : $response;
+            $account = is_array($data['account'] ?? null) ? $data['account'] : $data;
+            $institution = is_array($account['institution'] ?? null) ? $account['institution'] : [];
+
+            $accountNumber = (string) ($account['account_number'] ?? $account['accountNumber'] ?? '');
+            $bankCode = (string) (
+                $institution['bank_code']
+                ?? $institution['nip_code']
+                ?? $institution['code']
+                ?? $account['bank_code']
+                ?? ''
+            );
+
+            return [
+                'account_number' => $accountNumber !== '' ? $accountNumber : null,
+                'bank_code' => $bankCode !== '' ? $bankCode : null,
+            ];
+        } catch (\Throwable $e) {
+            Log::warning('Could not resolve linked bank details for Mono mandate.', [
+                'user_id' => $linked->user_id,
+                'mono_account_id' => $linked->mono_account_id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return ['account_number' => null, 'bank_code' => null];
+        }
     }
 
     /**
