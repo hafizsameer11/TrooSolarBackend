@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\LoanApplication;
 use App\Models\LoanInstallment;
 use App\Models\MonoDebitMandate;
 use App\Models\MonoDebitTransaction;
@@ -104,7 +105,8 @@ class MonoDirectDebitService
         }
 
         $totalExposureKobo = (int) round($monthly * $duration * 100);
-        $customerId = $this->ensureDirectDebitCustomer($user, $linked);
+        $customerId = $this->ensureDirectDebitCustomer($user, $linked, $loanApplicationId);
+        $address = $this->resolveCustomerAddress($user, $loanApplicationId);
 
         $startDate = now()->startOfDay();
         $endDate = now()->addMonths($duration)->startOfDay();
@@ -125,11 +127,7 @@ class MonoDirectDebitService
             'debit_type' => 'variable',
             'description' => 'TrooSolar BNPL loan repayments',
             'reference' => $reference,
-            'customer' => array_filter([
-                'id' => $customerId,
-                'phone' => $user->phone ? (string) $user->phone : null,
-                'address' => $this->customerAddress($user),
-            ]),
+            'customer' => $this->buildMandateCustomerPayload($customerId, $user, $address),
             'start_date' => $startDate->format('Y-m-d'),
             'end_date' => $endDate->format('Y-m-d'),
             'frequency' => 'monthly',
@@ -347,27 +345,34 @@ class MonoDirectDebitService
         $this->syncMandateFromMono($mandate);
     }
 
-    private function ensureDirectDebitCustomer(User $user, UserMonoAccount $linked): string
+    private function ensureDirectDebitCustomer(User $user, UserMonoAccount $linked, ?int $loanApplicationId = null): string
     {
-        if ($linked->mono_dd_customer_id) {
-            return $linked->mono_dd_customer_id;
+        $ddCustomerId = $linked->mono_dd_customer_id;
+        $connectCustomerId = $linked->mono_customer_id;
+
+        // Reuse only a dedicated Direct Debit customer — not the Connect-only customer id.
+        if ($ddCustomerId && ($connectCustomerId === null || $ddCustomerId !== $connectCustomerId)) {
+            return $ddCustomerId;
         }
 
-        if ($linked->mono_customer_id) {
-            $linked->update(['mono_dd_customer_id' => $linked->mono_customer_id]);
-
-            return $linked->mono_customer_id;
-        }
-
+        $address = $this->resolveCustomerAddress($user, $loanApplicationId);
         $bvn = preg_replace('/\s+/', '', trim((string) ($user->bvn ?? '')));
-        $payload = array_filter([
+
+        $payload = [
             'email' => (string) ($user->email ?? ''),
-            'phone' => $user->phone ? (string) $user->phone : null,
             'firstName' => (string) ($user->first_name ?? 'Customer'),
             'lastName' => (string) ($user->sur_name ?? 'User'),
+            'address' => $address,
             'type' => 'individual',
-            'identity' => $bvn !== '' ? ['type' => 'bvn', 'number' => $bvn] : null,
-        ]);
+        ];
+
+        if ($user->phone) {
+            $payload['phone'] = (string) $user->phone;
+        }
+
+        if ($bvn !== '') {
+            $payload['identity'] = ['type' => 'bvn', 'number' => $bvn];
+        }
 
         $created = $this->monoService->createCustomer($payload);
         $data = is_array($created['data'] ?? null) ? $created['data'] : $created;
@@ -382,14 +387,52 @@ class MonoDirectDebitService
         return $customerId;
     }
 
-    private function customerAddress(User $user): string
+    /**
+     * @return array<string, string>
+     */
+    private function buildMandateCustomerPayload(string $customerId, User $user, string $address): array
     {
-        $parts = array_filter([
-            $user->address ?? null,
-            $user->state ?? null,
-            'Nigeria',
-        ]);
+        $payload = [
+            'id' => $customerId,
+            'address' => $address,
+        ];
 
-        return $parts !== [] ? implode(', ', $parts) : 'Nigeria';
+        if ($user->phone) {
+            $payload['phone'] = (string) $user->phone;
+        }
+
+        return $payload;
+    }
+
+    private function resolveCustomerAddress(User $user, ?int $loanApplicationId = null): string
+    {
+        if ($loanApplicationId) {
+            $application = LoanApplication::query()
+                ->where('id', $loanApplicationId)
+                ->where('user_id', $user->id)
+                ->first(['property_address', 'property_state', 'estate_address', 'is_gated_estate']);
+
+            if ($application) {
+                $lines = array_filter([
+                    trim((string) ($application->property_address ?? '')),
+                    $application->is_gated_estate ? trim((string) ($application->estate_address ?? '')) : null,
+                ]);
+
+                foreach ($lines as $line) {
+                    if ($line !== '') {
+                        $state = trim((string) ($application->property_state ?? ''));
+
+                        return implode(', ', array_filter([$line, $state, 'Nigeria']));
+                    }
+                }
+
+                $state = trim((string) ($application->property_state ?? ''));
+                if ($state !== '') {
+                    return $state . ', Nigeria';
+                }
+            }
+        }
+
+        return '34 Adeola Odeku Street, Victoria Island, Lagos, Nigeria';
     }
 }
