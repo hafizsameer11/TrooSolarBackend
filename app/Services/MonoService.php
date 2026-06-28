@@ -425,18 +425,18 @@ class MonoService
         return $this->request('GET', '/v2/customers', [], $query);
     }
 
-    public function findCustomerIdByEmail(string $email): ?string
+    public function findCustomerIdByPhone(string $phone): ?string
     {
-        $email = strtolower(trim($email));
-        if ($email === '') {
+        $phone = preg_replace('/\D+/', '', trim($phone));
+        if ($phone === '') {
             return null;
         }
 
-        for ($page = 1; $page <= 10; $page++) {
-            $response = $this->listCustomers(['page' => $page, 'limit' => 100]);
+        try {
+            $response = $this->listCustomers(['phone' => $phone]);
             $rows = $response['data'] ?? null;
             if (! is_array($rows) || $rows === []) {
-                break;
+                return null;
             }
 
             foreach ($rows as $row) {
@@ -444,17 +444,51 @@ class MonoService
                 if ($row === null) {
                     continue;
                 }
-                if (strtolower(trim((string) ($row['email'] ?? ''))) === $email) {
-                    $id = (string) ($row['id'] ?? $row['_id'] ?? '');
+                $id = (string) ($row['id'] ?? $row['_id'] ?? '');
 
-                    return $id !== '' ? $id : null;
+                return $id !== '' ? $id : null;
+            }
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return null;
+    }
+
+    public function findCustomerIdByEmail(string $email): ?string
+    {
+        $email = strtolower(trim($email));
+        if ($email === '') {
+            return null;
+        }
+
+        try {
+            for ($page = 1; $page <= 10; $page++) {
+                $response = $this->listCustomers(['page' => $page]);
+                $rows = $response['data'] ?? null;
+                if (! is_array($rows) || $rows === []) {
+                    break;
+                }
+
+                foreach ($rows as $row) {
+                    $row = $this->normalizeCustomerRow($row);
+                    if ($row === null) {
+                        continue;
+                    }
+                    if (strtolower(trim((string) ($row['email'] ?? ''))) === $email) {
+                        $id = (string) ($row['id'] ?? $row['_id'] ?? '');
+
+                        return $id !== '' ? $id : null;
+                    }
+                }
+
+                $next = $response['meta']['next'] ?? null;
+                if ($next === null || $next === '') {
+                    break;
                 }
             }
-
-            $next = $response['meta']['next'] ?? null;
-            if ($next === null || $next === '') {
-                break;
-            }
+        } catch (\Throwable) {
+            return null;
         }
 
         return null;

@@ -364,8 +364,9 @@ class MonoDirectDebitService
         $candidateIds = array_values(array_unique(array_filter([
             $linked->mono_dd_customer_id,
             $linked->mono_customer_id,
-            $this->monoService->findCustomerIdByEmail((string) ($user->email ?? '')),
             $linked->mono_account_id ? $this->monoService->resolveCustomerIdForAccount($linked->mono_account_id) : null,
+            $this->monoService->findCustomerIdByPhone($phone),
+            $this->monoService->findCustomerIdByEmail((string) ($user->email ?? '')),
         ])));
 
         foreach ($candidateIds as $candidateId) {
@@ -390,7 +391,9 @@ class MonoDirectDebitService
                 throw $e;
             }
 
-            $existingId = $this->monoService->findCustomerIdByEmail((string) ($user->email ?? ''));
+            $existingId = $this->monoService->findCustomerIdByPhone($phone)
+                ?? $this->monoService->findCustomerIdByEmail((string) ($user->email ?? ''))
+                ?? ($linked->mono_customer_id ?: null);
             if ($existingId === null || $existingId === '') {
                 throw $e;
             }
