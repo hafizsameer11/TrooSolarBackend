@@ -45,6 +45,8 @@ class MonoDirectDebitController extends Controller
             $data = $request->validate([
                 'mono_calculation_id' => 'required|integer|exists:mono_loan_calculations,id',
                 'loan_application_id' => 'nullable|integer|exists:loan_applications,id',
+                'customer_address' => 'nullable|string|max:200',
+                'customer_phone' => 'nullable|string|max:20',
             ]);
 
             $mono = MonoLoanCalculation::with('loanCalculation')->findOrFail($data['mono_calculation_id']);
@@ -65,7 +67,11 @@ class MonoDirectDebitController extends Controller
             $result = $this->directDebitService->initiateMandateForLoan(
                 Auth::user(),
                 $mono,
-                $data['loan_application_id'] ?? null
+                $data['loan_application_id'] ?? null,
+                [
+                    'customer_address' => $data['customer_address'] ?? null,
+                    'customer_phone' => $data['customer_phone'] ?? null,
+                ]
             );
 
             return ResponseHelper::success([

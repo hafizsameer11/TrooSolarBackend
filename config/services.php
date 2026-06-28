@@ -37,6 +37,11 @@ return [
         'webhook_secret' => env('MONO_WEBHOOK_SECRET'),
         'env' => env('MONO_ENV', 'sandbox'),
         'run_credit_check' => env('MONO_RUN_CREDIT_CHECK', true),
+        'mandate_default_address' => env(
+            'MONO_MANDATE_DEFAULT_ADDRESS',
+            '34 Adeola Odeku Street, Victoria Island, Lagos, Nigeria'
+        ),
+        'mandate_default_phone' => env('MONO_MANDATE_DEFAULT_PHONE', ''),
     ],
 
 ];

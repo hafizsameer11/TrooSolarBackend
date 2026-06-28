@@ -65,8 +65,12 @@ class MonoDirectDebitService
      *
      * @return array{mandate: MonoDebitMandate, authorization_url: string|null}
      */
-    public function initiateMandateForLoan(User $user, MonoLoanCalculation $mono, ?int $loanApplicationId = null): array
-    {
+    public function initiateMandateForLoan(
+        User $user,
+        MonoLoanCalculation $mono,
+        ?int $loanApplicationId = null,
+        array $customerOverrides = []
+    ): array {
         $linked = UserMonoAccount::where('user_id', $user->id)
             ->where('status', 'linked')
             ->first();
@@ -105,8 +109,9 @@ class MonoDirectDebitService
         }
 
         $totalExposureKobo = (int) round($monthly * $duration * 100);
-        $customerId = $this->ensureDirectDebitCustomer($user, $linked, $loanApplicationId);
-        $address = $this->resolveCustomerAddress($user, $loanApplicationId);
+        $address = $this->resolveCustomerAddress($user, $loanApplicationId, $customerOverrides);
+        $phone = $this->resolveCustomerPhone($user, $customerOverrides);
+        $customerId = $this->ensureDirectDebitCustomer($user, $linked, $address, $phone, $loanApplicationId);
 
         $startDate = now()->startOfDay();
         $endDate = now()->addMonths($duration)->startOfDay();
@@ -127,7 +132,7 @@ class MonoDirectDebitService
             'debit_type' => 'variable',
             'description' => 'TrooSolar BNPL loan repayments',
             'reference' => $reference,
-            'customer' => $this->buildMandateCustomerPayload($customerId, $user, $address),
+            'customer' => $this->buildMandateCustomerPayload($customerId, $phone, $address),
             'start_date' => $startDate->format('Y-m-d'),
             'end_date' => $endDate->format('Y-m-d'),
             'frequency' => 'monthly',
@@ -345,36 +350,35 @@ class MonoDirectDebitService
         $this->syncMandateFromMono($mandate);
     }
 
-    private function ensureDirectDebitCustomer(User $user, UserMonoAccount $linked, ?int $loanApplicationId = null): string
-    {
+    private function ensureDirectDebitCustomer(
+        User $user,
+        UserMonoAccount $linked,
+        string $address,
+        string $phone,
+        ?int $loanApplicationId = null
+    ): string {
+        $bvn = $this->resolveCustomerBvn($user, $loanApplicationId);
+        $profile = $this->buildDirectDebitCustomerProfile($user, $address, $phone, $bvn);
+
         $ddCustomerId = $linked->mono_dd_customer_id;
         $connectCustomerId = $linked->mono_customer_id;
 
-        // Reuse only a dedicated Direct Debit customer — not the Connect-only customer id.
         if ($ddCustomerId && ($connectCustomerId === null || $ddCustomerId !== $connectCustomerId)) {
-            return $ddCustomerId;
+            try {
+                $this->monoService->updateCustomer($ddCustomerId, $profile);
+
+                return $ddCustomerId;
+            } catch (\Throwable $e) {
+                Log::warning('Mono Direct Debit customer update failed; creating a new customer.', [
+                    'user_id' => $user->id,
+                    'mono_dd_customer_id' => $ddCustomerId,
+                    'error' => $e->getMessage(),
+                ]);
+                $linked->update(['mono_dd_customer_id' => null]);
+            }
         }
 
-        $address = $this->resolveCustomerAddress($user, $loanApplicationId);
-        $bvn = preg_replace('/\s+/', '', trim((string) ($user->bvn ?? '')));
-
-        $payload = [
-            'email' => (string) ($user->email ?? ''),
-            'firstName' => (string) ($user->first_name ?? 'Customer'),
-            'lastName' => (string) ($user->sur_name ?? 'User'),
-            'address' => $address,
-            'type' => 'individual',
-        ];
-
-        if ($user->phone) {
-            $payload['phone'] = (string) $user->phone;
-        }
-
-        if ($bvn !== '') {
-            $payload['identity'] = ['type' => 'bvn', 'number' => $bvn];
-        }
-
-        $created = $this->monoService->createCustomer($payload);
+        $created = $this->monoService->createCustomer($profile);
         $data = is_array($created['data'] ?? null) ? $created['data'] : $created;
         $customerId = (string) ($data['id'] ?? $data['_id'] ?? '');
 
@@ -388,24 +392,50 @@ class MonoDirectDebitService
     }
 
     /**
-     * @return array<string, string>
+     * @return array<string, mixed>
      */
-    private function buildMandateCustomerPayload(string $customerId, User $user, string $address): array
+    private function buildDirectDebitCustomerProfile(User $user, string $address, string $phone, string $bvn): array
     {
-        $payload = [
-            'id' => $customerId,
-            'address' => $address,
-        ];
-
-        if ($user->phone) {
-            $payload['phone'] = (string) $user->phone;
+        if ($bvn === '') {
+            throw new RuntimeException(
+                'BVN is required for Mono automatic repayments. Add your BVN to your profile, then try again.'
+            );
         }
 
-        return $payload;
+        return [
+            'email' => (string) ($user->email ?? ''),
+            'first_name' => (string) ($user->first_name ?? 'Customer'),
+            'last_name' => (string) ($user->sur_name ?? 'User'),
+            'address' => $this->truncateAddress($address),
+            'phone' => $phone,
+            'identity' => ['type' => 'bvn', 'number' => $bvn],
+        ];
     }
 
-    private function resolveCustomerAddress(User $user, ?int $loanApplicationId = null): string
+    /**
+     * Mono mandate initiation requires customer.id, customer.phone, and customer.address.
+     *
+     * @return array<string, string>
+     */
+    private function buildMandateCustomerPayload(string $customerId, string $phone, string $address): array
     {
+        return [
+            'id' => $customerId,
+            'phone' => $phone,
+            'address' => $this->truncateAddress($address),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $overrides
+     */
+    private function resolveCustomerAddress(User $user, ?int $loanApplicationId = null, array $overrides = []): string
+    {
+        $override = trim((string) ($overrides['customer_address'] ?? $overrides['address'] ?? ''));
+        if ($override !== '') {
+            return $this->truncateAddress($override);
+        }
+
         if ($loanApplicationId) {
             $application = LoanApplication::query()
                 ->where('id', $loanApplicationId)
@@ -419,20 +449,93 @@ class MonoDirectDebitService
                 ]);
 
                 foreach ($lines as $line) {
-                    if ($line !== '') {
+                    if ($line !== '' && ! str_contains(strtolower($line), 'no delivery')) {
                         $state = trim((string) ($application->property_state ?? ''));
 
-                        return implode(', ', array_filter([$line, $state, 'Nigeria']));
+                        return $this->truncateAddress(implode(', ', array_filter([$line, $state, 'Nigeria'])));
                     }
                 }
 
                 $state = trim((string) ($application->property_state ?? ''));
                 if ($state !== '') {
-                    return $state . ', Nigeria';
+                    return $this->truncateAddress($state . ', Nigeria');
                 }
             }
         }
 
-        return '34 Adeola Odeku Street, Victoria Island, Lagos, Nigeria';
+        return $this->truncateAddress((string) config('services.mono.mandate_default_address'));
+    }
+
+    /**
+     * @param  array<string, mixed>  $overrides
+     */
+    private function resolveCustomerPhone(User $user, array $overrides = []): string
+    {
+        $override = trim((string) ($overrides['customer_phone'] ?? $overrides['phone'] ?? ''));
+        if ($override !== '') {
+            return $this->normalizePhone($override);
+        }
+
+        $fromUser = $this->normalizePhone($user->phone ?? '');
+        if ($fromUser !== '') {
+            return $fromUser;
+        }
+
+        $fallback = $this->normalizePhone((string) config('services.mono.mandate_default_phone'));
+        if ($fallback !== '') {
+            return $fallback;
+        }
+
+        throw new RuntimeException(
+            'Phone number is required for Mono automatic repayments. Add your phone to your profile or pass customer_phone.'
+        );
+    }
+
+    private function resolveCustomerBvn(User $user, ?int $loanApplicationId = null): string
+    {
+        $bvn = preg_replace('/\s+/', '', trim((string) ($user->bvn ?? '')));
+        if ($bvn !== '') {
+            return $bvn;
+        }
+
+        if ($loanApplicationId) {
+            $application = LoanApplication::query()
+                ->where('id', $loanApplicationId)
+                ->where('user_id', $user->id)
+                ->first(['loan_plan_snapshot']);
+
+            $snapshot = is_array($application?->loan_plan_snapshot) ? $application->loan_plan_snapshot : [];
+            $snapshotBvn = preg_replace('/\s+/', '', trim((string) ($snapshot['bvn'] ?? '')));
+            if ($snapshotBvn !== '') {
+                return $snapshotBvn;
+            }
+        }
+
+        return '';
+    }
+
+    private function normalizePhone(?string $phone): string
+    {
+        $digits = preg_replace('/\D+/', '', (string) $phone);
+        if ($digits === '') {
+            return '';
+        }
+
+        if (str_starts_with($digits, '234') && strlen($digits) >= 13) {
+            return '0' . substr($digits, 3);
+        }
+
+        if (strlen($digits) === 10 && in_array($digits[0], ['7', '8', '9'], true)) {
+            return '0' . $digits;
+        }
+
+        return $digits;
+    }
+
+    private function truncateAddress(string $address): string
+    {
+        $address = trim(preg_replace('/\s+/', ' ', $address) ?? '');
+
+        return mb_substr($address, 0, 100);
     }
 }

@@ -117,7 +117,7 @@ class MonoRepayTestBootstrapService
                 'product_category' => 'full-kit',
                 'credit_check_method' => 'auto',
                 'property_state' => 'Lagos',
-                'property_address' => 'Mono repay test — no delivery',
+                'property_address' => '34 Adeola Odeku Street, Victoria Island, Lagos',
                 'admin_notes' => 'MONO_REPAY_TEST — isolated mandate/debit test loan. Not a real disbursement.',
                 'order_items_snapshot' => $orderItemsSnapshot,
                 'loan_plan_snapshot' => [

@@ -409,6 +409,15 @@ class MonoService
     }
 
     /**
+     * @param  array<string, mixed>  $body
+     * @return array<string, mixed>
+     */
+    public function updateCustomer(string $customerId, array $body): array
+    {
+        return $this->request('PATCH', '/v2/customers/' . rawurlencode($customerId), $body);
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private function request(string $method, string $path, array $body = [], array $query = []): array
