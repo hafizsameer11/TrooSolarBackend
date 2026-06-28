@@ -440,7 +440,8 @@ class MonoService
             }
 
             foreach ($rows as $row) {
-                if (! is_array($row)) {
+                $row = $this->normalizeCustomerRow($row);
+                if ($row === null) {
                     continue;
                 }
                 if (strtolower(trim((string) ($row['email'] ?? ''))) === $email) {
@@ -454,6 +455,52 @@ class MonoService
             if ($next === null || $next === '') {
                 break;
             }
+        }
+
+        return null;
+    }
+
+    public function resolveCustomerIdForAccount(string $accountId): ?string
+    {
+        $accountId = trim($accountId);
+        if ($accountId === '') {
+            return null;
+        }
+
+        try {
+            $response = $this->getAccountDetails($accountId);
+            $data = is_array($response['data'] ?? null) ? $response['data'] : $response;
+            $customer = $data['customer'] ?? null;
+
+            if (is_string($customer) && $customer !== '') {
+                return $customer;
+            }
+
+            if (is_array($customer)) {
+                $id = (string) ($customer['id'] ?? $customer['_id'] ?? '');
+
+                return $id !== '' ? $id : null;
+            }
+        } catch (\Throwable) {
+            // Account lookup is best-effort when resolving an existing Mono customer.
+        }
+
+        return null;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function normalizeCustomerRow(mixed $row): ?array
+    {
+        if (is_array($row)) {
+            return $row;
+        }
+
+        if (is_string($row) && $row !== '') {
+            $decoded = json_decode($row, true);
+
+            return is_array($decoded) ? $decoded : null;
         }
 
         return null;
@@ -488,9 +535,13 @@ class MonoService
                 'mono-sec-key' => $secret,
             ])->timeout(60);
 
-            $response = $method === 'POST'
-                ? $client->post($url, $body)
-                : $client->get($url);
+            $response = match (strtoupper($method)) {
+                'POST' => $client->post($url, $body),
+                'PATCH' => $client->patch($url, $body),
+                'PUT' => $client->put($url, $body),
+                'DELETE' => $client->delete($url, $body),
+                default => $client->get($url),
+            };
         } catch (RequestException $e) {
             throw new RuntimeException(
                 $this->formatApiErrorMessage($e->response?->json(), $e->response?->status(), $path),

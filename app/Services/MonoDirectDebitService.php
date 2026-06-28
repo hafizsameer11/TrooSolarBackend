@@ -361,28 +361,48 @@ class MonoDirectDebitService
         $bvn = $this->resolveCustomerBvn($user, $loanApplicationId);
         $profile = $this->buildDirectDebitCustomerProfile($user, $address, $phone, $bvn);
 
-        $ddCustomerId = $linked->mono_dd_customer_id;
-        $connectCustomerId = $linked->mono_customer_id;
+        $candidateIds = array_values(array_unique(array_filter([
+            $linked->mono_dd_customer_id,
+            $linked->mono_customer_id,
+            $this->monoService->findCustomerIdByEmail((string) ($user->email ?? '')),
+            $linked->mono_account_id ? $this->monoService->resolveCustomerIdForAccount($linked->mono_account_id) : null,
+        ])));
 
-        if ($ddCustomerId && ($connectCustomerId === null || $ddCustomerId !== $connectCustomerId)) {
+        foreach ($candidateIds as $candidateId) {
             try {
-                $this->monoService->updateCustomer($ddCustomerId, $profile);
+                $this->monoService->updateCustomer($candidateId, $profile);
+                $linked->update(['mono_dd_customer_id' => $candidateId]);
 
-                return $ddCustomerId;
+                return $candidateId;
             } catch (\Throwable $e) {
-                Log::warning('Mono Direct Debit customer update failed; creating a new customer.', [
+                Log::warning('Mono Direct Debit customer sync failed for candidate id.', [
                     'user_id' => $user->id,
-                    'mono_dd_customer_id' => $ddCustomerId,
+                    'mono_customer_id' => $candidateId,
                     'error' => $e->getMessage(),
                 ]);
-                $linked->update(['mono_dd_customer_id' => null]);
             }
         }
 
-        $created = $this->createOrResolveDirectDebitCustomer($user, $profile);
+        try {
+            $created = $this->monoService->createCustomer($profile);
+        } catch (RuntimeException $e) {
+            if (! $this->isDuplicateMonoCustomerError($e)) {
+                throw $e;
+            }
+
+            $existingId = $this->monoService->findCustomerIdByEmail((string) ($user->email ?? ''));
+            if ($existingId === null || $existingId === '') {
+                throw $e;
+            }
+
+            $this->monoService->updateCustomer($existingId, $profile);
+            $linked->update(['mono_dd_customer_id' => $existingId]);
+
+            return $existingId;
+        }
 
         $data = is_array($created['data'] ?? null) ? $created['data'] : $created;
-        $customerId = (string) ($data['id'] ?? $data['_id'] ?? $created['id'] ?? '');
+        $customerId = (string) ($data['id'] ?? $data['_id'] ?? '');
 
         if ($customerId === '') {
             throw new RuntimeException('Mono could not create a Direct Debit customer profile.');
@@ -391,31 +411,6 @@ class MonoDirectDebitService
         $linked->update(['mono_dd_customer_id' => $customerId]);
 
         return $customerId;
-    }
-
-    /**
-     * @param  array<string, mixed>  $profile
-     * @return array<string, mixed>
-     */
-    private function createOrResolveDirectDebitCustomer(User $user, array $profile): array
-    {
-        try {
-            return $this->monoService->createCustomer($profile);
-        } catch (RuntimeException $e) {
-            if (! $this->isDuplicateMonoCustomerError($e)) {
-                throw $e;
-            }
-
-            $email = strtolower(trim((string) ($user->email ?? '')));
-            $existingId = $this->monoService->findCustomerIdByEmail($email);
-            if ($existingId === null || $existingId === '') {
-                throw $e;
-            }
-
-            $this->monoService->updateCustomer($existingId, $profile);
-
-            return ['id' => $existingId, 'data' => ['id' => $existingId]];
-        }
     }
 
     private function isDuplicateMonoCustomerError(RuntimeException $e): bool

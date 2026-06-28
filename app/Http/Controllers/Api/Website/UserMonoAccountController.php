@@ -47,13 +47,16 @@ class UserMonoAccountController extends Controller
 
             $accountId = $monoService->exchangeCode($data['mono_code']);
 
+            $monoCustomerId = $monoService->resolveCustomerIdForAccount($accountId);
+
             $account = UserMonoAccount::updateOrCreate(
                 ['user_id' => Auth::id()],
-                [
+                array_filter([
                     'mono_account_id' => $accountId,
+                    'mono_customer_id' => $monoCustomerId,
                     'status' => 'linked',
                     'linked_at' => now(),
-                ]
+                ], fn ($value) => $value !== null)
             );
 
             return ResponseHelper::success([
