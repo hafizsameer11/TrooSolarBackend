@@ -7,13 +7,19 @@ return [
     | Mono Direct Debit production test lane (isolated from normal BNPL flow)
     |--------------------------------------------------------------------------
     |
-    | Enable only for whitelisted user IDs. Requires a shared secret on bootstrap.
+    | Enable only for whitelisted user emails (or legacy user IDs). Requires a shared secret.
     | Set BNPL_MONO_REPAY_TEST_ENABLED=false when not testing.
     |
     */
 
     'enabled' => filter_var(env('BNPL_MONO_REPAY_TEST_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
 
+    'user_emails' => array_values(array_filter(array_map(
+        static fn (string $email): string => strtolower(trim($email)),
+        array_map('trim', explode(',', (string) env('BNPL_MONO_REPAY_TEST_USER_EMAILS', 'hmstech11@gmail.com')))
+    ))),
+
+    /** @deprecated Prefer USER_EMAILS; kept for backward compatibility on older deploys. */
     'user_ids' => array_values(array_filter(array_map(
         'intval',
         array_map('trim', explode(',', (string) env('BNPL_MONO_REPAY_TEST_USER_IDS', '')))

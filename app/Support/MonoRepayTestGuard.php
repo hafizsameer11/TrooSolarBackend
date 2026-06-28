@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use App\Models\User;
 use Illuminate\Http\Request;
 use RuntimeException;
 
@@ -12,24 +13,31 @@ class MonoRepayTestGuard
         return (bool) config('bnpl_mono_repay_test.enabled', false);
     }
 
-    public static function isUserAllowed(?int $userId): bool
+    public static function isUserAllowed(?User $user): bool
     {
-        if ($userId === null || $userId <= 0) {
+        if (! $user) {
             return false;
         }
 
-        $allowed = config('bnpl_mono_repay_test.user_ids', []);
+        $email = strtolower(trim((string) $user->email));
+        $allowedEmails = config('bnpl_mono_repay_test.user_emails', []);
+        if ($email !== '' && is_array($allowedEmails) && in_array($email, $allowedEmails, true)) {
+            return true;
+        }
 
-        return is_array($allowed) && in_array($userId, $allowed, true);
+        $userId = (int) $user->id;
+        $allowedIds = config('bnpl_mono_repay_test.user_ids', []);
+
+        return $userId > 0 && is_array($allowedIds) && in_array($userId, $allowedIds, true);
     }
 
-    public static function assertAccess(?int $userId): void
+    public static function assertAccess(?User $user): void
     {
         if (! self::isEnabled()) {
             throw new RuntimeException('Mono repayment test lane is disabled.');
         }
 
-        if (! self::isUserAllowed($userId)) {
+        if (! self::isUserAllowed($user)) {
             throw new RuntimeException('Your account is not enabled for Mono repayment testing.');
         }
     }

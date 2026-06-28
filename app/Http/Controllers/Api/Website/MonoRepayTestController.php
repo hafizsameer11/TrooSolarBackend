@@ -25,10 +25,10 @@ class MonoRepayTestController extends Controller
     public function config()
     {
         try {
-            $userId = (int) Auth::id();
-            MonoRepayTestGuard::assertAccess($userId);
+            $user = Auth::user();
+            MonoRepayTestGuard::assertAccess($user);
 
-            $linked = UserMonoAccount::where('user_id', $userId)
+            $linked = UserMonoAccount::where('user_id', $user->id)
                 ->where('status', 'linked')
                 ->first();
 
@@ -54,8 +54,7 @@ class MonoRepayTestController extends Controller
     public function status(Request $request)
     {
         try {
-            $userId = (int) Auth::id();
-            MonoRepayTestGuard::assertAccess($userId);
+            MonoRepayTestGuard::assertAccess(Auth::user());
             MonoRepayTestGuard::assertSecret($request);
 
             $existing = $this->bootstrapService->getStatus(Auth::user());
@@ -78,8 +77,7 @@ class MonoRepayTestController extends Controller
     public function bootstrap(Request $request)
     {
         try {
-            $userId = (int) Auth::id();
-            MonoRepayTestGuard::assertAccess($userId);
+            MonoRepayTestGuard::assertAccess(Auth::user());
             MonoRepayTestGuard::assertSecret($request);
 
             $data = $request->validate([
@@ -106,8 +104,7 @@ class MonoRepayTestController extends Controller
     public function refreshDueDates(Request $request)
     {
         try {
-            $userId = (int) Auth::id();
-            MonoRepayTestGuard::assertAccess($userId);
+            MonoRepayTestGuard::assertAccess(Auth::user());
             MonoRepayTestGuard::assertSecret($request);
 
             $result = $this->bootstrapService->refreshDueDates(Auth::user());

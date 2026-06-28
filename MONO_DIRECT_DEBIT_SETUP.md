@@ -160,7 +160,7 @@ For client testing on **live Mono keys** without lowering global minimum loan am
 
 ```env
 BNPL_MONO_REPAY_TEST_ENABLED=true
-BNPL_MONO_REPAY_TEST_USER_IDS=19,39
+BNPL_MONO_REPAY_TEST_USER_EMAILS=hmstech11@gmail.com
 BNPL_MONO_REPAY_TEST_SECRET=choose-a-long-random-secret
 BNPL_MONO_REPAY_TEST_BUNDLE_ID=119
 BNPL_MONO_REPAY_TEST_INSTALLMENT_AMOUNT=2000
@@ -172,14 +172,14 @@ BNPL_MONO_REPAY_TEST_DUE_TODAY=true
 | Variable | Purpose |
 |----------|---------|
 | `ENABLED` | Master switch — set `false` when done testing |
-| `USER_IDS` | Comma-separated user IDs allowed to access test lane |
+| `USER_EMAILS` | Comma-separated emails allowed to access test lane |
 | `SECRET` | Required on bootstrap/status URLs (`?token=...`) |
 | `BUNDLE_ID` | Bundle for order snapshot (`0` = cheapest available) |
 | `INSTALLMENT_AMOUNT` | Each installment amount (e.g. ₦2,000) |
 | `INSTALLMENT_COUNT` | Number of installments (e.g. 3) |
 | `DUE_TODAY` | First installment due **today** (for artisan collect) |
 
-### Dashboard URL (whitelisted user, logged in)
+### Dashboard URL (whitelisted email, logged in)
 
 ```
 https://app.troosolar.io/bnpl/mono-repay-test?token=YOUR_SECRET
