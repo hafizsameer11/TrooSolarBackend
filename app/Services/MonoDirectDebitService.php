@@ -71,6 +71,7 @@ class MonoDirectDebitService
         ?int $loanApplicationId = null,
         array $customerOverrides = []
     ): array {
+        $user->refresh();
         $linked = UserMonoAccount::where('user_id', $user->id)
             ->where('status', 'linked')
             ->first();
@@ -378,9 +379,10 @@ class MonoDirectDebitService
             }
         }
 
-        $created = $this->monoService->createCustomer($profile);
+        $created = $this->createOrResolveDirectDebitCustomer($user, $profile);
+
         $data = is_array($created['data'] ?? null) ? $created['data'] : $created;
-        $customerId = (string) ($data['id'] ?? $data['_id'] ?? '');
+        $customerId = (string) ($data['id'] ?? $data['_id'] ?? $created['id'] ?? '');
 
         if ($customerId === '') {
             throw new RuntimeException('Mono could not create a Direct Debit customer profile.');
@@ -389,6 +391,40 @@ class MonoDirectDebitService
         $linked->update(['mono_dd_customer_id' => $customerId]);
 
         return $customerId;
+    }
+
+    /**
+     * @param  array<string, mixed>  $profile
+     * @return array<string, mixed>
+     */
+    private function createOrResolveDirectDebitCustomer(User $user, array $profile): array
+    {
+        try {
+            return $this->monoService->createCustomer($profile);
+        } catch (RuntimeException $e) {
+            if (! $this->isDuplicateMonoCustomerError($e)) {
+                throw $e;
+            }
+
+            $email = strtolower(trim((string) ($user->email ?? '')));
+            $existingId = $this->monoService->findCustomerIdByEmail($email);
+            if ($existingId === null || $existingId === '') {
+                throw $e;
+            }
+
+            $this->monoService->updateCustomer($existingId, $profile);
+
+            return ['id' => $existingId, 'data' => ['id' => $existingId]];
+        }
+    }
+
+    private function isDuplicateMonoCustomerError(RuntimeException $e): bool
+    {
+        $message = strtolower($e->getMessage());
+
+        return str_contains($message, 'already exists')
+            || str_contains($message, 'duplicate')
+            || str_contains($message, 'same email');
     }
 
     /**

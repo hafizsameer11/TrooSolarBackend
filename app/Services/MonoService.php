@@ -420,6 +420,48 @@ class MonoService
     /**
      * @return array<string, mixed>
      */
+    public function listCustomers(array $query = []): array
+    {
+        return $this->request('GET', '/v2/customers', [], $query);
+    }
+
+    public function findCustomerIdByEmail(string $email): ?string
+    {
+        $email = strtolower(trim($email));
+        if ($email === '') {
+            return null;
+        }
+
+        for ($page = 1; $page <= 10; $page++) {
+            $response = $this->listCustomers(['page' => $page, 'limit' => 100]);
+            $rows = $response['data'] ?? null;
+            if (! is_array($rows) || $rows === []) {
+                break;
+            }
+
+            foreach ($rows as $row) {
+                if (! is_array($row)) {
+                    continue;
+                }
+                if (strtolower(trim((string) ($row['email'] ?? ''))) === $email) {
+                    $id = (string) ($row['id'] ?? $row['_id'] ?? '');
+
+                    return $id !== '' ? $id : null;
+                }
+            }
+
+            $next = $response['meta']['next'] ?? null;
+            if ($next === null || $next === '') {
+                break;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
     private function request(string $method, string $path, array $body = [], array $query = []): array
     {
         $secret = $this->getSecretKey();

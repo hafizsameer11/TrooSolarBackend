@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\LoanApplication;
 use App\Models\LoanInstallment;
 use App\Models\MonoLoanCalculation;
+use App\Models\User;
 use App\Services\MonoDirectDebitService;
 use Exception;
 use Illuminate\Http\Request;
@@ -64,14 +65,21 @@ class MonoDirectDebitController extends Controller
                 }
             }
 
+            $user = User::query()->findOrFail(Auth::id());
+
+            $customerOverrides = [];
+            if (! empty(trim((string) ($data['customer_address'] ?? '')))) {
+                $customerOverrides['customer_address'] = trim((string) $data['customer_address']);
+            }
+            if (! empty(trim((string) ($data['customer_phone'] ?? '')))) {
+                $customerOverrides['customer_phone'] = trim((string) $data['customer_phone']);
+            }
+
             $result = $this->directDebitService->initiateMandateForLoan(
-                Auth::user(),
+                $user,
                 $mono,
                 $data['loan_application_id'] ?? null,
-                [
-                    'customer_address' => $data['customer_address'] ?? null,
-                    'customer_phone' => $data['customer_phone'] ?? null,
-                ]
+                $customerOverrides
             );
 
             return ResponseHelper::success([
