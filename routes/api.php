@@ -264,6 +264,13 @@ Route::post('bundles/{bundle}/update', [BundleController::class, 'update'])
     Route::get('/bnpl/mandate/status/{mono_calculation_id}', [\App\Http\Controllers\Api\Website\MonoDirectDebitController::class, 'status']);
     Route::post('/bnpl/mandate/initiate', [\App\Http\Controllers\Api\Website\MonoDirectDebitController::class, 'initiate']);
     Route::post('/bnpl/installments/{installmentId}/mono-debit', [\App\Http\Controllers\Api\Website\MonoDirectDebitController::class, 'debitInstallment']);
+
+    // Mono Direct Debit production test lane (whitelisted users only — does not change normal BNPL flow)
+    Route::get('/bnpl/mono-repay-test/config', [\App\Http\Controllers\Api\Website\MonoRepayTestController::class, 'config']);
+    Route::get('/bnpl/mono-repay-test/status', [\App\Http\Controllers\Api\Website\MonoRepayTestController::class, 'status']);
+    Route::post('/bnpl/mono-repay-test/bootstrap', [\App\Http\Controllers\Api\Website\MonoRepayTestController::class, 'bootstrap']);
+    Route::post('/bnpl/mono-repay-test/refresh-due-dates', [\App\Http\Controllers\Api\Website\MonoRepayTestController::class, 'refreshDueDates']);
+
     Route::get('/bnpl/mono-credit-status/{session_id}', [BNPLController::class, 'monoCreditStatus']);
 
     // User Mono bank account (profile linking)

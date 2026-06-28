@@ -150,6 +150,66 @@ Deploy `Troosolar_Dashboard` so users see:
 
 ---
 
+---
+
+## 9. Production test lane (isolated — does not change normal BNPL)
+
+For client testing on **live Mono keys** without lowering global minimum loan amounts.
+
+### Enable on server `.env`
+
+```env
+BNPL_MONO_REPAY_TEST_ENABLED=true
+BNPL_MONO_REPAY_TEST_USER_IDS=19,39
+BNPL_MONO_REPAY_TEST_SECRET=choose-a-long-random-secret
+BNPL_MONO_REPAY_TEST_BUNDLE_ID=119
+BNPL_MONO_REPAY_TEST_INSTALLMENT_AMOUNT=2000
+BNPL_MONO_REPAY_TEST_INSTALLMENT_COUNT=3
+BNPL_MONO_REPAY_TEST_DOWN_PAYMENT=1000
+BNPL_MONO_REPAY_TEST_DUE_TODAY=true
+```
+
+| Variable | Purpose |
+|----------|---------|
+| `ENABLED` | Master switch — set `false` when done testing |
+| `USER_IDS` | Comma-separated user IDs allowed to access test lane |
+| `SECRET` | Required on bootstrap/status URLs (`?token=...`) |
+| `BUNDLE_ID` | Bundle for order snapshot (`0` = cheapest available) |
+| `INSTALLMENT_AMOUNT` | Each installment amount (e.g. ₦2,000) |
+| `INSTALLMENT_COUNT` | Number of installments (e.g. 3) |
+| `DUE_TODAY` | First installment due **today** (for artisan collect) |
+
+### Dashboard URL (whitelisted user, logged in)
+
+```
+https://app.troosolar.io/bnpl/mono-repay-test?token=YOUR_SECRET
+```
+
+### Test flow
+
+1. **Link bank** (Mono Connect)
+2. **Create test loan** — bypasses BNPL minimums; creates approved order + installments
+3. **Set up mandate** — same Mono e-mandate as production
+4. Wait for `ready_to_debit` (webhook or refresh)
+5. Ensure bank balance ≥ installment amount
+6. On server:
+   ```bash
+   php artisan bnpl:collect-due-installments --dry-run
+   php artisan bnpl:collect-due-installments
+   ```
+   Or use **Debit from linked bank** on the loan page for one installment.
+
+### API endpoints (auth + whitelist + secret)
+
+| Method | Path |
+|--------|------|
+| GET | `/api/bnpl/mono-repay-test/config` |
+| GET | `/api/bnpl/mono-repay-test/status?token=...` |
+| POST | `/api/bnpl/mono-repay-test/bootstrap` |
+| POST | `/api/bnpl/mono-repay-test/refresh-due-dates` |
+
+Header alternative: `X-Mono-Repay-Test-Secret: YOUR_SECRET`
+
 ## Reference
 
 - [Mono Direct Debit overview](https://docs.mono.co/docs/payments/direct-debit/overview)
