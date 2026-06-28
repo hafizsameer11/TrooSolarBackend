@@ -133,7 +133,7 @@ class MonoDirectDebitService
             'debit_type' => 'variable',
             'description' => 'TrooSolar BNPL loan repayments',
             'reference' => $reference,
-            'customer' => $this->buildMandateCustomerPayload($customerId, $phone, $address),
+            'customer' => $this->buildMandateCustomerPayload($customerId),
             'start_date' => $startDate->format('Y-m-d'),
             'end_date' => $endDate->format('Y-m-d'),
             'frequency' => 'monthly',
@@ -359,33 +359,49 @@ class MonoDirectDebitService
         ?int $loanApplicationId = null
     ): string {
         $bvn = $this->resolveCustomerBvn($user, $loanApplicationId);
-        $profile = $this->buildDirectDebitCustomerProfile($user, $address, $phone, $bvn);
+        $createPayload = $this->buildDirectDebitCustomerCreatePayload($user, $address, $phone, $bvn);
+        $updatePayload = $this->buildDirectDebitCustomerUpdatePayload($user, $address, $phone, $bvn);
+
+        $accountCustomerId = $linked->mono_account_id
+            ? $this->monoService->resolveCustomerIdForAccount($linked->mono_account_id)
+            : null;
 
         $candidateIds = array_values(array_unique(array_filter([
             $linked->mono_dd_customer_id,
             $linked->mono_customer_id,
-            $linked->mono_account_id ? $this->monoService->resolveCustomerIdForAccount($linked->mono_account_id) : null,
+            $accountCustomerId,
             $this->monoService->findCustomerIdByPhone($phone),
             $this->monoService->findCustomerIdByEmail((string) ($user->email ?? '')),
         ])));
 
+        $trustedIds = array_values(array_unique(array_filter([
+            $linked->mono_dd_customer_id,
+            $linked->mono_customer_id,
+            $accountCustomerId,
+        ])));
+
         foreach ($candidateIds as $candidateId) {
             try {
-                $this->monoService->updateCustomer($candidateId, $profile);
-                $linked->update(['mono_dd_customer_id' => $candidateId]);
-
-                return $candidateId;
+                $this->monoService->updateCustomer($candidateId, $updatePayload);
             } catch (\Throwable $e) {
                 Log::warning('Mono Direct Debit customer sync failed for candidate id.', [
                     'user_id' => $user->id,
                     'mono_customer_id' => $candidateId,
                     'error' => $e->getMessage(),
                 ]);
+
+                if (! in_array($candidateId, $trustedIds, true)) {
+                    continue;
+                }
             }
+
+            $linked->update(['mono_dd_customer_id' => $candidateId]);
+
+            return $candidateId;
         }
 
         try {
-            $created = $this->monoService->createCustomer($profile);
+            $created = $this->monoService->createCustomer($createPayload);
         } catch (RuntimeException $e) {
             if (! $this->isDuplicateMonoCustomerError($e)) {
                 throw $e;
@@ -398,7 +414,16 @@ class MonoDirectDebitService
                 throw $e;
             }
 
-            $this->monoService->updateCustomer($existingId, $profile);
+            try {
+                $this->monoService->updateCustomer($existingId, $updatePayload);
+            } catch (\Throwable $updateError) {
+                Log::warning('Mono Direct Debit customer update after duplicate create failed.', [
+                    'user_id' => $user->id,
+                    'mono_customer_id' => $existingId,
+                    'error' => $updateError->getMessage(),
+                ]);
+            }
+
             $linked->update(['mono_dd_customer_id' => $existingId]);
 
             return $existingId;
@@ -426,9 +451,11 @@ class MonoDirectDebitService
     }
 
     /**
+     * Mono POST /v2/customers — create payload.
+     *
      * @return array<string, mixed>
      */
-    private function buildDirectDebitCustomerProfile(User $user, string $address, string $phone, string $bvn): array
+    private function buildDirectDebitCustomerCreatePayload(User $user, string $address, string $phone, string $bvn): array
     {
         if ($bvn === '') {
             throw new RuntimeException(
@@ -447,16 +474,35 @@ class MonoDirectDebitService
     }
 
     /**
-     * Mono mandate initiation requires customer.id, customer.phone, and customer.address.
+     * Mono PATCH /v2/customers/{id} — update payload (email is not allowed).
+     *
+     * @return array<string, mixed>
+     */
+    private function buildDirectDebitCustomerUpdatePayload(User $user, string $address, string $phone, string $bvn): array
+    {
+        $payload = [
+            'first_name' => (string) ($user->first_name ?? 'Customer'),
+            'last_name' => (string) ($user->sur_name ?? 'User'),
+            'address' => $this->truncateAddress($address),
+            'phone' => $phone,
+        ];
+
+        if ($bvn !== '') {
+            $payload['identity'] = ['type' => 'bvn', 'number' => $bvn];
+        }
+
+        return $payload;
+    }
+
+    /**
+     * Mono POST /v2/payments/initiate (mandate) — customer object is id only.
      *
      * @return array<string, string>
      */
-    private function buildMandateCustomerPayload(string $customerId, string $phone, string $address): array
+    private function buildMandateCustomerPayload(string $customerId): array
     {
         return [
             'id' => $customerId,
-            'phone' => $phone,
-            'address' => $this->truncateAddress($address),
         ];
     }
 
