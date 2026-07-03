@@ -1282,6 +1282,7 @@ class OrderController extends Controller
                 isset($data['delivery_location_id']) ? (int) $data['delivery_location_id'] : null,
                 isset($data['state_id']) ? (int) $data['state_id'] : null,
                 $checkoutSettings,
+                $data['product_category'] ?? null,
             );
             $deliveryFee = $resolvedFees['delivery_fee'];
             $installationFee = $resolvedFees['installation_fee'];

@@ -112,6 +112,7 @@ Route::get('/config/states', [ConfigurationController::class, 'getStates']);
 Route::get('/config/loan-configuration', [ConfigurationController::class, 'getLoanConfiguration']);
 Route::get('/config/add-ons', [ConfigurationController::class, 'getAddOns']);
 Route::get('/config/delivery-locations', [ConfigurationController::class, 'getDeliveryLocations']);
+Route::get('/config/checkout-settings', [ConfigurationController::class, 'getCheckoutSettings']);
 Route::get('/config/calculator-settings', [ConfigurationController::class, 'getCalculatorSettings']);
 Route::get('/config/mono', [ConfigurationController::class, 'getMonoConfig']);
 

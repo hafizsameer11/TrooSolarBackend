@@ -31,7 +31,7 @@ class AuditController extends Controller
             // Home path: explicit "home" or legacy requests with no subtype
             $isHomeSubtype = $isHomeOffice && ! $isOfficeSubtype;
 
-            $data = $request->validate([
+            $validationRules = [
                 'audit_type' => 'required|in:home-office,commercial',
                 'audit_subtype' => 'nullable|in:home,office',
                 'customer_type' => 'nullable|in:residential,sme,commercial',
@@ -73,7 +73,16 @@ class AuditController extends Controller
                 'is_gated_estate' => 'nullable|boolean',
                 'estate_name' => 'nullable|required_if:is_gated_estate,true|string|max:255',
                 'estate_address' => 'nullable|required_if:is_gated_estate,true|string',
-            ]);
+            ];
+
+            if (Schema::hasColumn('audit_requests', 'preferred_audit_date')) {
+                $validationRules['preferred_audit_date'] = 'required|date|after_or_equal:today';
+            }
+            if (Schema::hasColumn('audit_requests', 'preferred_audit_time')) {
+                $validationRules['preferred_audit_time'] = ['required', 'string', 'regex:/^([01]\d|2[0-3]):[0-5]\d$/'];
+            }
+
+            $data = $request->validate($validationRules);
 
             // Ensure user is authenticated
             $userId = Auth::id();
@@ -128,6 +137,14 @@ class AuditController extends Controller
                     ? (string) $data['source']
                     : 'bnpl';
             }
+            if (Schema::hasColumn('audit_requests', 'preferred_audit_date')) {
+                $auditData['preferred_audit_date'] = $data['preferred_audit_date'] ?? null;
+            }
+            if (Schema::hasColumn('audit_requests', 'preferred_audit_time')) {
+                $auditData['preferred_audit_time'] = !empty($data['preferred_audit_time'])
+                    ? (string) $data['preferred_audit_time']
+                    : null;
+            }
 
             // Log the data being inserted for debugging
             Log::info('Creating audit request', [
@@ -173,6 +190,12 @@ class AuditController extends Controller
                 'is_gated_estate' => $auditRequest->is_gated_estate,
                 'estate_name' => $auditRequest->estate_name,
                 'estate_address' => $auditRequest->estate_address,
+                'preferred_audit_date' => Schema::hasColumn('audit_requests', 'preferred_audit_date')
+                    ? $auditRequest->preferred_audit_date?->format('Y-m-d')
+                    : null,
+                'preferred_audit_time' => Schema::hasColumn('audit_requests', 'preferred_audit_time')
+                    ? $auditRequest->preferred_audit_time
+                    : null,
                 'has_property_details' => !empty($auditRequest->property_address), // Indicates if user provided details
                 'source' => Schema::hasColumn('audit_requests', 'source') ? $auditRequest->source : null,
                 'created_at' => $auditRequest->created_at->toIso8601String(),
@@ -261,8 +284,26 @@ class AuditController extends Controller
                 'is_gated_estate' => $auditRequest->is_gated_estate,
                 'estate_name' => $auditRequest->estate_name,
                 'estate_address' => $auditRequest->estate_address,
+                'preferred_audit_date' => Schema::hasColumn('audit_requests', 'preferred_audit_date')
+                    ? $auditRequest->preferred_audit_date?->format('Y-m-d')
+                    : null,
+                'preferred_audit_time' => Schema::hasColumn('audit_requests', 'preferred_audit_time')
+                    ? $auditRequest->preferred_audit_time
+                    : null,
                 'source' => Schema::hasColumn('audit_requests', 'source') ? $auditRequest->source : null,
                 'admin_notes' => $auditRequest->admin_notes,
+                'approval_payment_date' => Schema::hasColumn('audit_requests', 'approval_payment_date')
+                    ? $auditRequest->approval_payment_date?->format('Y-m-d')
+                    : null,
+                'approval_payment_time' => Schema::hasColumn('audit_requests', 'approval_payment_time')
+                    ? $auditRequest->approval_payment_time
+                    : null,
+                'approval_payment_amount' => Schema::hasColumn('audit_requests', 'approval_payment_amount')
+                    ? ($auditRequest->approval_payment_amount !== null ? (float) $auditRequest->approval_payment_amount : null)
+                    : null,
+                'approval_payment_account_details' => Schema::hasColumn('audit_requests', 'approval_payment_account_details')
+                    ? $auditRequest->approval_payment_account_details
+                    : null,
                 'approved_by' => $auditRequest->approver ? [
                     'id' => $auditRequest->approver->id,
                     'name' => $auditRequest->approver->first_name . ' ' . $auditRequest->approver->sur_name,
@@ -311,8 +352,26 @@ class AuditController extends Controller
                         'contact_phone' => $request->contact_phone,
                         'order_id' => $request->order_id,
                         'order_number' => $request->order?->order_number,
+                        'preferred_audit_date' => Schema::hasColumn('audit_requests', 'preferred_audit_date')
+                            ? $request->preferred_audit_date?->format('Y-m-d')
+                            : null,
+                        'preferred_audit_time' => Schema::hasColumn('audit_requests', 'preferred_audit_time')
+                            ? $request->preferred_audit_time
+                            : null,
                         'source' => Schema::hasColumn('audit_requests', 'source') ? $request->source : null,
                         'admin_notes' => $request->admin_notes,
+                        'approval_payment_date' => Schema::hasColumn('audit_requests', 'approval_payment_date')
+                            ? $request->approval_payment_date?->format('Y-m-d')
+                            : null,
+                        'approval_payment_time' => Schema::hasColumn('audit_requests', 'approval_payment_time')
+                            ? $request->approval_payment_time
+                            : null,
+                        'approval_payment_amount' => Schema::hasColumn('audit_requests', 'approval_payment_amount')
+                            ? ($request->approval_payment_amount !== null ? (float) $request->approval_payment_amount : null)
+                            : null,
+                        'approval_payment_account_details' => Schema::hasColumn('audit_requests', 'approval_payment_account_details')
+                            ? $request->approval_payment_account_details
+                            : null,
                         'approved_at' => $request->approved_at?->toIso8601String(),
                         'created_at' => $request->created_at->toIso8601String(),
                         'updated_at' => $request->updated_at->toIso8601String(),

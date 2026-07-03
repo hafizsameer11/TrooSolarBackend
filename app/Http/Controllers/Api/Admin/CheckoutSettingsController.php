@@ -12,6 +12,34 @@ use Illuminate\Support\Facades\Log;
 
 class CheckoutSettingsController extends Controller
 {
+    private function formatSettingsPayload(CheckoutSetting $s): array
+    {
+        $window = CheckoutPricing::deliveryWindow($s);
+        $categoryDefs = CheckoutSetting::productCategoryDefinitions();
+        $categoryFees = $s->normalizedCategoryDeliveryFees();
+
+        return [
+            'delivery_fee' => (int) $s->delivery_fee,
+            'category_delivery_fees' => $categoryFees,
+            'product_categories' => $categoryDefs,
+            'delivery_min_working_days' => (int) $s->delivery_min_working_days,
+            'delivery_max_working_days' => (int) $s->delivery_max_working_days,
+            /** @deprecated legacy flat NGN; prefer insurance_fee_percentage */
+            'insurance_fee' => (int) $s->insurance_fee,
+            'vat_percentage' => (float) ($s->vat_percentage ?? config('checkout.vat_percentage', 7.5)),
+            'insurance_fee_percentage' => (float) ($s->insurance_fee_percentage ?? config('checkout.insurance_fee_percentage', 3)),
+            'installation_flat_addon' => (int) ($s->installation_flat_addon ?? 0),
+            'installation_schedule_working_days' => (int) $s->installation_schedule_working_days,
+            'installation_description' => (string) ($s->installation_description ?? ''),
+            'preview' => [
+                'delivery_estimate_label' => $window['label'],
+                'delivery_estimated_from' => $window['estimated_from'],
+                'delivery_estimated_to' => $window['estimated_to'],
+                'installation_estimated_date' => CheckoutPricing::installationEstimatedDate($s),
+            ],
+        ];
+    }
+
     /**
      * GET /api/admin/checkout-settings
      */
@@ -19,26 +47,11 @@ class CheckoutSettingsController extends Controller
     {
         try {
             $s = CheckoutSetting::get();
-            $window = CheckoutPricing::deliveryWindow($s);
 
-            return ResponseHelper::success([
-                'delivery_fee' => (int) $s->delivery_fee,
-                'delivery_min_working_days' => (int) $s->delivery_min_working_days,
-                'delivery_max_working_days' => (int) $s->delivery_max_working_days,
-                /** @deprecated legacy flat NGN; prefer insurance_fee_percentage */
-                'insurance_fee' => (int) $s->insurance_fee,
-                'vat_percentage' => (float) ($s->vat_percentage ?? config('checkout.vat_percentage', 7.5)),
-                'insurance_fee_percentage' => (float) ($s->insurance_fee_percentage ?? config('checkout.insurance_fee_percentage', 3)),
-                'installation_flat_addon' => (int) ($s->installation_flat_addon ?? 0),
-                'installation_schedule_working_days' => (int) $s->installation_schedule_working_days,
-                'installation_description' => (string) ($s->installation_description ?? ''),
-                'preview' => [
-                    'delivery_estimate_label' => $window['label'],
-                    'delivery_estimated_from' => $window['estimated_from'],
-                    'delivery_estimated_to' => $window['estimated_to'],
-                    'installation_estimated_date' => CheckoutPricing::installationEstimatedDate($s),
-                ],
-            ], 'Checkout settings retrieved successfully');
+            return ResponseHelper::success(
+                $this->formatSettingsPayload($s),
+                'Checkout settings retrieved successfully'
+            );
         } catch (Exception $e) {
             Log::error('Checkout settings show: '.$e->getMessage());
 
@@ -52,8 +65,15 @@ class CheckoutSettingsController extends Controller
     public function update(Request $request)
     {
         try {
+            $categoryKeys = collect(CheckoutSetting::productCategoryDefinitions())
+                ->pluck('key')
+                ->filter()
+                ->all();
+
             $request->validate([
                 'delivery_fee' => 'nullable|integer|min:0|max:100000000',
+                'category_delivery_fees' => 'nullable|array',
+                'category_delivery_fees.*' => 'nullable|integer|min:0|max:100000000',
                 'delivery_min_working_days' => 'nullable|integer|min:1|max:90',
                 'delivery_max_working_days' => 'nullable|integer|min:1|max:90',
                 'insurance_fee' => 'nullable|integer|min:0|max:100000000',
@@ -67,6 +87,16 @@ class CheckoutSettingsController extends Controller
             $s = CheckoutSetting::get();
             if ($request->has('delivery_fee')) {
                 $s->delivery_fee = (int) $request->delivery_fee;
+            }
+            if ($request->has('category_delivery_fees') && is_array($request->category_delivery_fees)) {
+                $incoming = $request->category_delivery_fees;
+                $normalized = [];
+                foreach ($categoryKeys as $key) {
+                    if (array_key_exists($key, $incoming)) {
+                        $normalized[$key] = max(0, (int) $incoming[$key]);
+                    }
+                }
+                $s->category_delivery_fees = $normalized;
             }
             if ($request->has('delivery_min_working_days')) {
                 $s->delivery_min_working_days = (int) $request->delivery_min_working_days;
@@ -97,25 +127,10 @@ class CheckoutSettingsController extends Controller
             }
             $s->save();
 
-            $window = CheckoutPricing::deliveryWindow($s);
-
-            return ResponseHelper::success([
-                'delivery_fee' => (int) $s->delivery_fee,
-                'delivery_min_working_days' => (int) $s->delivery_min_working_days,
-                'delivery_max_working_days' => (int) $s->delivery_max_working_days,
-                'insurance_fee' => (int) $s->insurance_fee,
-                'vat_percentage' => (float) ($s->vat_percentage ?? config('checkout.vat_percentage', 7.5)),
-                'insurance_fee_percentage' => (float) ($s->insurance_fee_percentage ?? config('checkout.insurance_fee_percentage', 3)),
-                'installation_flat_addon' => (int) ($s->installation_flat_addon ?? 0),
-                'installation_schedule_working_days' => (int) $s->installation_schedule_working_days,
-                'installation_description' => (string) ($s->installation_description ?? ''),
-                'preview' => [
-                    'delivery_estimate_label' => $window['label'],
-                    'delivery_estimated_from' => $window['estimated_from'],
-                    'delivery_estimated_to' => $window['estimated_to'],
-                    'installation_estimated_date' => CheckoutPricing::installationEstimatedDate($s),
-                ],
-            ], 'Checkout settings updated successfully');
+            return ResponseHelper::success(
+                $this->formatSettingsPayload($s),
+                'Checkout settings updated successfully'
+            );
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'status' => 'error',

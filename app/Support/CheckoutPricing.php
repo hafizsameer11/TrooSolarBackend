@@ -108,6 +108,7 @@ class CheckoutPricing
         ?int $deliveryLocationId,
         ?int $stateId,
         ?CheckoutSetting $settings = null,
+        ?string $productCategory = null,
     ): array {
         $settings ??= CheckoutSetting::get();
 
@@ -174,7 +175,7 @@ class CheckoutPricing
         }
 
         if (! $deliveryFromBundle && $deliveryFee <= 0) {
-            $deliveryFee = max(0, (float) $settings->delivery_fee);
+            $deliveryFee = $settings->deliveryFeeForCategory($productCategory);
         }
 
         if (! $installationFromBundle && $installationFee <= 0) {

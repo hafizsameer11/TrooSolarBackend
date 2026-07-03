@@ -13,10 +13,27 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\Rule;
 use Exception;
 
 class AuditAdminController extends Controller
 {
+    private function formatApprovalPaymentFields(AuditRequest $request): array
+    {
+        if (! Schema::hasColumn('audit_requests', 'approval_payment_date')) {
+            return [];
+        }
+
+        return [
+            'approval_payment_date' => $request->approval_payment_date?->format('Y-m-d'),
+            'approval_payment_time' => $request->approval_payment_time,
+            'approval_payment_amount' => $request->approval_payment_amount !== null
+                ? (float) $request->approval_payment_amount
+                : null,
+            'approval_payment_account_details' => $request->approval_payment_account_details,
+        ];
+    }
     /**
      * Get all users who have made audit requests
      * GET /api/admin/audit/users-with-requests
@@ -177,6 +194,8 @@ class AuditAdminController extends Controller
                         'property_rooms' => $request->property_rooms,
                         'is_gated_estate' => $request->is_gated_estate,
                         'has_property_details' => !empty($request->property_address),
+                        'preferred_audit_date' => $request->preferred_audit_date?->format('Y-m-d'),
+                        'preferred_audit_time' => $request->preferred_audit_time,
                         'needs_admin_input' => $request->audit_type === 'commercial'
                             && empty($request->property_address)
                             && $request->status === 'pending',
@@ -283,6 +302,8 @@ class AuditAdminController extends Controller
                     'status' => $request->status,
                     'user' => $request->user ? [
                         'id' => $request->user->id,
+                        'first_name' => $request->user->first_name,
+                        'sur_name' => $request->user->sur_name,
                         'name' => trim(($request->user->first_name ?? '') . ' ' . ($request->user->sur_name ?? '')),
                         'email' => $request->user->email,
                         'phone' => $request->user->phone,
@@ -299,9 +320,12 @@ class AuditAdminController extends Controller
                     'is_gated_estate' => $request->is_gated_estate,
                     'estate_name' => $request->estate_name,
                     'estate_address' => $request->estate_address,
+                    'preferred_audit_date' => $request->preferred_audit_date?->format('Y-m-d'),
+                    'preferred_audit_time' => $request->preferred_audit_time,
                     'has_property_details' => !empty($request->property_address), // Indicates if user provided property details
                     'needs_admin_input' => $request->audit_type === 'commercial' && empty($request->property_address), // Commercial requests may need admin to gather details
                     'admin_notes' => $request->admin_notes,
+                    ...$this->formatApprovalPaymentFields($request),
                     'approved_by' => $request->approver ? [
                         'id' => $request->approver->id,
                         'name' => trim(($request->approver->first_name ?? '') . ' ' . ($request->approver->sur_name ?? '')),
@@ -353,7 +377,9 @@ class AuditAdminController extends Controller
                 'id' => $auditRequest->id,
                 'user' => [
                     'id' => $auditRequest->user->id,
-                    'name' => $auditRequest->user->first_name . ' ' . $auditRequest->user->sur_name,
+                    'first_name' => $auditRequest->user->first_name,
+                    'sur_name' => $auditRequest->user->sur_name,
+                    'name' => trim(($auditRequest->user->first_name ?? '') . ' ' . ($auditRequest->user->sur_name ?? '')),
                     'email' => $auditRequest->user->email,
                     'phone' => $auditRequest->user->phone,
                 ],
@@ -374,8 +400,11 @@ class AuditAdminController extends Controller
                 'is_gated_estate' => $auditRequest->is_gated_estate,
                 'estate_name' => $auditRequest->estate_name,
                 'estate_address' => $auditRequest->estate_address,
+                'preferred_audit_date' => $auditRequest->preferred_audit_date?->format('Y-m-d'),
+                'preferred_audit_time' => $auditRequest->preferred_audit_time,
                 'status' => $auditRequest->status,
                 'admin_notes' => $auditRequest->admin_notes,
+                ...$this->formatApprovalPaymentFields($auditRequest),
                 'approved_by' => $auditRequest->approver ? [
                     'id' => $auditRequest->approver->id,
                     'name' => $auditRequest->approver->first_name . ' ' . $auditRequest->approver->sur_name,
@@ -407,11 +436,34 @@ class AuditAdminController extends Controller
         try {
             $data = $request->validate([
                 'status' => 'required|in:approved,rejected,completed',
-                'admin_notes' => 'nullable|string|max:1000',
+                'admin_notes' => 'nullable|string|max:2000',
                 'property_state' => 'nullable|string|max:255',
                 'property_address' => 'nullable|string',
                 'contact_name' => 'nullable|string|max:255',
                 'contact_phone' => 'nullable|string|max:30',
+                'approval_payment_date' => [
+                    Rule::requiredIf(fn () => $request->input('status') === 'approved'),
+                    'nullable',
+                    'date',
+                ],
+                'approval_payment_time' => [
+                    Rule::requiredIf(fn () => $request->input('status') === 'approved'),
+                    'nullable',
+                    'string',
+                    'max:20',
+                ],
+                'approval_payment_amount' => [
+                    Rule::requiredIf(fn () => $request->input('status') === 'approved'),
+                    'nullable',
+                    'numeric',
+                    'min:0',
+                ],
+                'approval_payment_account_details' => [
+                    Rule::requiredIf(fn () => $request->input('status') === 'approved'),
+                    'nullable',
+                    'string',
+                    'max:2000',
+                ],
             ]);
 
             $auditRequest = AuditRequest::findOrFail($id);
@@ -422,6 +474,27 @@ class AuditAdminController extends Controller
             $auditRequest->property_address = $data['property_address'] ?? $auditRequest->property_address;
             $auditRequest->contact_name = $data['contact_name'] ?? $auditRequest->contact_name;
             $auditRequest->contact_phone = $data['contact_phone'] ?? $auditRequest->contact_phone;
+
+            if (Schema::hasColumn('audit_requests', 'approval_payment_date')) {
+                if (array_key_exists('approval_payment_date', $data)) {
+                    $auditRequest->approval_payment_date = $data['approval_payment_date'] ?: null;
+                }
+                if (array_key_exists('approval_payment_time', $data)) {
+                    $auditRequest->approval_payment_time = ! empty($data['approval_payment_time'])
+                        ? (string) $data['approval_payment_time']
+                        : null;
+                }
+                if (array_key_exists('approval_payment_amount', $data)) {
+                    $auditRequest->approval_payment_amount = $data['approval_payment_amount'] !== null
+                        ? (float) $data['approval_payment_amount']
+                        : null;
+                }
+                if (array_key_exists('approval_payment_account_details', $data)) {
+                    $auditRequest->approval_payment_account_details = ! empty($data['approval_payment_account_details'])
+                        ? (string) $data['approval_payment_account_details']
+                        : null;
+                }
+            }
 
             if ($data['status'] === 'approved' || $data['status'] === 'completed') {
                 $auditRequest->approved_by = Auth::id();
@@ -451,6 +524,7 @@ class AuditAdminController extends Controller
                 'id' => $auditRequest->id,
                 'status' => $auditRequest->status,
                 'admin_notes' => $auditRequest->admin_notes,
+                ...$this->formatApprovalPaymentFields($auditRequest),
                 'property_state' => $auditRequest->property_state,
                 'property_address' => $auditRequest->property_address,
                 'contact_name' => $auditRequest->contact_name,

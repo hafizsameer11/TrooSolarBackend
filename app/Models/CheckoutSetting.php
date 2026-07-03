@@ -10,6 +10,7 @@ class CheckoutSetting extends Model
 
     protected $fillable = [
         'delivery_fee',
+        'category_delivery_fees',
         'delivery_min_working_days',
         'delivery_max_working_days',
         'insurance_fee',
@@ -22,6 +23,7 @@ class CheckoutSetting extends Model
 
     protected $casts = [
         'delivery_fee' => 'integer',
+        'category_delivery_fees' => 'array',
         'delivery_min_working_days' => 'integer',
         'delivery_max_working_days' => 'integer',
         'insurance_fee' => 'integer',
@@ -52,5 +54,46 @@ class CheckoutSetting extends Model
         }
 
         return $row;
+    }
+
+    /** @return array<int, array{key: string, label: string}> */
+    public static function productCategoryDefinitions(): array
+    {
+        return config('checkout.product_categories', []);
+    }
+
+    /**
+     * Delivery fee for a Buy Now / BNPL product category (falls back to global delivery_fee).
+     */
+    public function deliveryFeeForCategory(?string $productCategory): float
+    {
+        $key = trim((string) ($productCategory ?? ''));
+        $fees = is_array($this->category_delivery_fees) ? $this->category_delivery_fees : [];
+
+        if ($key !== '' && array_key_exists($key, $fees) && $fees[$key] !== null && $fees[$key] !== '') {
+            return max(0, (float) $fees[$key]);
+        }
+
+        return max(0, (float) ($this->delivery_fee ?? 0));
+    }
+
+    /** Normalized map keyed by product category slug. */
+    public function normalizedCategoryDeliveryFees(): array
+    {
+        $defs = self::productCategoryDefinitions();
+        $stored = is_array($this->category_delivery_fees) ? $this->category_delivery_fees : [];
+        $out = [];
+
+        foreach ($defs as $def) {
+            $slug = (string) ($def['key'] ?? '');
+            if ($slug === '') {
+                continue;
+            }
+            $out[$slug] = array_key_exists($slug, $stored)
+                ? max(0, (int) $stored[$slug])
+                : max(0, (int) ($this->delivery_fee ?? 0));
+        }
+
+        return $out;
     }
 }

@@ -4,7 +4,9 @@ namespace App\Http\Controllers\Api\Website;
 
 use App\Http\Controllers\Controller;
 use App\Helpers\ResponseHelper;
+use App\Models\CheckoutSetting;
 use App\Models\State;
+use App\Support\CheckoutPricing;
 use Illuminate\Http\Request;
 
 class ConfigurationController extends Controller
@@ -43,7 +45,7 @@ class ConfigurationController extends Controller
     {
         try {
             $states = State::where('is_active', true)
-                ->select('id', 'name', 'code')
+                ->select('id', 'name', 'code', 'default_delivery_fee', 'default_installation_fee')
                 ->orderBy('sort_order')
                 ->orderBy('name')
                 ->get()
@@ -52,6 +54,8 @@ class ConfigurationController extends Controller
                         'id' => $state->id,
                         'name' => $state->name,
                         'code' => $state->code,
+                        'default_delivery_fee' => (float) ($state->default_delivery_fee ?? 0),
+                        'default_installation_fee' => (float) ($state->default_installation_fee ?? 0),
                     ];
                 });
 
@@ -143,6 +147,31 @@ class ConfigurationController extends Controller
             return ResponseHelper::success($payload, 'Loan configuration retrieved successfully');
         } catch (\Exception $e) {
             return ResponseHelper::error('Failed to retrieve loan configuration', 500);
+        }
+    }
+
+    /**
+     * Checkout fees for Buy Now / BNPL (public).
+     * GET /api/config/checkout-settings
+     */
+    public function getCheckoutSettings()
+    {
+        try {
+            $s = CheckoutSetting::get();
+            $window = CheckoutPricing::deliveryWindow($s);
+
+            return ResponseHelper::success([
+                'delivery_fee' => (int) $s->delivery_fee,
+                'category_delivery_fees' => $s->normalizedCategoryDeliveryFees(),
+                'product_categories' => CheckoutSetting::productCategoryDefinitions(),
+                'vat_percentage' => (float) ($s->vat_percentage ?? config('checkout.vat_percentage', 7.5)),
+                'insurance_fee_percentage' => (float) ($s->insurance_fee_percentage ?? config('checkout.insurance_fee_percentage', 3)),
+                'delivery_estimate_label' => $window['label'],
+                'delivery_estimated_from' => $window['estimated_from'],
+                'delivery_estimated_to' => $window['estimated_to'],
+            ], 'Checkout settings retrieved successfully');
+        } catch (\Exception $e) {
+            return ResponseHelper::error('Failed to retrieve checkout settings', 500);
         }
     }
 

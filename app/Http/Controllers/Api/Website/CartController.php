@@ -18,6 +18,7 @@ use App\Models\CheckoutSetting;
 use App\Models\ReferralSettings;
 use App\Models\User;
 use App\Support\CheckoutPricing;
+use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Support\Arr;
 use Laravel\Sanctum\PersonalAccessToken;
 
@@ -55,7 +56,14 @@ class CartController extends Controller
         try {
             $userId = Auth::id();
 
-            $items = CartItem::with('itemable')
+            $items = CartItem::with([
+                'itemable' => function (MorphTo $morphTo) {
+                    $morphTo->morphWith([
+                        Product::class => ['images'],
+                        Bundles::class => [],
+                    ]);
+                },
+            ])
                 ->where('user_id', $userId)
                 ->get();
 
@@ -341,7 +349,12 @@ class CartController extends Controller
         ]);
 
         // Try to find a main image & a gallery
-        $image = $arr['image_url'] ?? $arr['image'] ?? $arr['thumbnail'] ?? null;
+        $image = $arr['featured_image_url']
+            ?? $arr['featured_image']
+            ?? $arr['image_url']
+            ?? $arr['image']
+            ?? $arr['thumbnail']
+            ?? null;
         $gallery = [];
 
         // If you keep images in a relation/array field, try common keys

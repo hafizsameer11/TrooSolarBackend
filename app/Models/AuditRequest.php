@@ -29,8 +29,14 @@ class AuditRequest extends Model
         'is_gated_estate',
         'estate_name',
         'estate_address',
+        'preferred_audit_date',
+        'preferred_audit_time',
         'status',
         'admin_notes',
+        'approval_payment_date',
+        'approval_payment_time',
+        'approval_payment_amount',
+        'approval_payment_account_details',
         'approved_by',
         'approved_at',
     ];
@@ -39,6 +45,9 @@ class AuditRequest extends Model
         'is_gated_estate' => 'boolean',
         'property_floors' => 'integer',
         'property_rooms' => 'integer',
+        'preferred_audit_date' => 'date',
+        'approval_payment_date' => 'date',
+        'approval_payment_amount' => 'decimal:2',
         'approved_at' => 'datetime',
     ];
 
