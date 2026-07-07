@@ -1124,6 +1124,7 @@ class OrderController extends Controller
                 'customer_type' => 'nullable|in:residential,sme,commercial',
                 'product_category' => 'nullable|string',
                 'include_insurance' => 'nullable|boolean',
+                'include_installation_material' => 'nullable|boolean',
                 'include_inspection' => 'nullable|boolean',
                 'state_id' => 'nullable|exists:states,id',
                 'delivery_location_id' => 'nullable|exists:delivery_locations,id',
@@ -1288,21 +1289,43 @@ class OrderController extends Controller
             $installationFee = $resolvedFees['installation_fee'];
             $inspectionFeeFromBundle = $resolvedFees['inspection_fee_from_bundle'];
 
+            $installerChoice = $data['installer_choice'] ?? null;
+            $includeInstallationMaterial = (bool) ($data['include_installation_material'] ?? false);
+            $bundleCustomFees = CheckoutPricing::resolveBundleInvoiceFeesFromCustomServices(
+                $bundle,
+                'buy_now',
+                $installerChoice ?? 'troosolar',
+                $includeInstallationMaterial
+            );
+
+            if ($bundle) {
+                $deliveryFee = $bundleCustomFees['delivery_fee'] > 0
+                    ? $bundleCustomFees['delivery_fee']
+                    : $deliveryFee;
+                $installationFee = $bundleCustomFees['installation_fee'];
+                $inspectionFeeFromBundle = $bundleCustomFees['inspection_fee'];
+            } else {
+                if ($bundleCustomFees['delivery_fee'] > 0) {
+                    $deliveryFee = $bundleCustomFees['delivery_fee'];
+                }
+                if ($bundleCustomFees['installation_fee'] > 0) {
+                    $installationFee = $bundleCustomFees['installation_fee'];
+                }
+                if ($bundleCustomFees['inspection_fee'] > 0) {
+                    $inspectionFeeFromBundle = $bundleCustomFees['inspection_fee'];
+                }
+            }
+
             // Calculate fees
-            $materialCost = 0;
+            $materialCost = $bundleCustomFees['material_cost'];
             $inspectionFee = $inspectionFeeFromBundle;
             $insuranceFee = 0;
             $addOnsTotal = 0;
             $addOns = [];
 
-            // Installation fee (only if using Troosolar installer)
-            $installerChoice = $data['installer_choice'] ?? null;
-            if ($installerChoice === 'troosolar') {
-                // Optional inspection from bundle materials only (no hardcoded inspection fee)
-            } else {
-                // Own installer: no Troosolar installation fee
+            if ($installerChoice !== 'troosolar') {
                 $installationFee = 0;
-                if ($inspectionFeeFromBundle <= 0) {
+                if ($inspectionFee <= 0) {
                     $inspectionFee = 0;
                 }
             }

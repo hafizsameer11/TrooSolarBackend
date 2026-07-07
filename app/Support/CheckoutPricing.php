@@ -188,4 +188,108 @@ class CheckoutPricing
             'inspection_fee_from_bundle' => round($inspectionFromBundle, 2),
         ];
     }
+
+    /**
+     * Invoice fees from bundle custom_services (Bundle Mgt → Invoice tab).
+     * Fee names should contain delivery / installation / inspection / material.
+     *
+     * @return array{delivery_fee: float, installation_fee: float, inspection_fee: float, material_cost: float}
+     */
+    public static function resolveBundleInvoiceFeesFromCustomServices(
+        ?Bundles $bundle,
+        string $checkoutFlow = 'buy_now',
+        ?string $installerChoice = 'troosolar',
+        bool $includeInstallationMaterial = false,
+    ): array {
+        $result = [
+            'delivery_fee' => 0.0,
+            'installation_fee' => 0.0,
+            'inspection_fee' => 0.0,
+            'material_cost' => 0.0,
+        ];
+
+        if (! $bundle) {
+            return $result;
+        }
+
+        $bundle->loadMissing('customServices');
+        $services = $bundle->customServices;
+        $flowServices = $services->filter(function ($svc) use ($checkoutFlow) {
+            $flow = $svc->flow_type ?? 'buy_now';
+
+            return $flow === $checkoutFlow;
+        });
+        if ($checkoutFlow === 'bnpl' && $flowServices->isEmpty()) {
+            $flowServices = $services->filter(fn ($svc) => ($svc->flow_type ?? 'buy_now') === 'buy_now');
+        }
+
+        foreach ($flowServices as $svc) {
+            $rawTitle = (string) ($svc->title ?? '');
+            if (str_starts_with($rawTitle, '[OL]')
+                || str_starts_with($rawTitle, '[OL:TROOSOLAR]')
+                || str_starts_with($rawTitle, '[OL:OWN]')) {
+                continue;
+            }
+
+            $visibility = 'both';
+            if (str_starts_with($rawTitle, '[FEE:TROOSOLAR]')) {
+                $visibility = 'troosolar';
+            } elseif (str_starts_with($rawTitle, '[FEE:OWN]')) {
+                $visibility = 'own';
+            }
+
+            $visible = match ($visibility) {
+                'troosolar' => $installerChoice !== 'own',
+                'own' => $installerChoice === 'own',
+                default => true,
+            };
+            if (! $visible) {
+                continue;
+            }
+
+            $clean = $rawTitle;
+            foreach (['[FEE:TROOSOLAR]', '[FEE:OWN]', '[FEE]'] as $prefix) {
+                if (str_starts_with($clean, $prefix)) {
+                    $clean = trim(substr($clean, strlen($prefix)));
+                    break;
+                }
+            }
+            $name = strtolower($clean);
+            $amount = LegacyInvoiceFees::effectiveAmount((float) ($svc->service_amount ?? 0), 'installation');
+            if (str_contains($name, 'delivery')) {
+                $amount = LegacyInvoiceFees::effectiveAmount((float) ($svc->service_amount ?? 0), 'delivery');
+            } elseif (str_contains($name, 'inspection')) {
+                $amount = LegacyInvoiceFees::effectiveAmount((float) ($svc->service_amount ?? 0), 'inspection');
+            } elseif (str_contains($name, 'material')) {
+                if ($installerChoice === 'own' && ! $includeInstallationMaterial) {
+                    continue;
+                }
+                $amount = (float) ($svc->service_amount ?? 0);
+            } elseif (str_contains($name, 'installation')) {
+                $amount = LegacyInvoiceFees::effectiveAmount((float) ($svc->service_amount ?? 0), 'installation');
+            } else {
+                continue;
+            }
+
+            if ($amount <= 0) {
+                continue;
+            }
+
+            if (str_contains($name, 'material')) {
+                $result['material_cost'] += $amount;
+            } elseif (str_contains($name, 'delivery')) {
+                $result['delivery_fee'] += $amount;
+            } elseif (str_contains($name, 'inspection')) {
+                $result['inspection_fee'] += $amount;
+            } elseif (str_contains($name, 'installation')) {
+                $result['installation_fee'] += $amount;
+            }
+        }
+
+        foreach (array_keys($result) as $key) {
+            $result[$key] = round($result[$key], 2);
+        }
+
+        return $result;
+    }
 }
