@@ -168,6 +168,12 @@ class BundleSelectionController extends Controller
                     $row['quantity_applies'] = (bool) ($service->quantity_applies ?? true);
                 }
 
+                if (Schema::hasColumn('custom_services', 'flow_type')) {
+                    $row['flow_type'] = in_array($service->flow_type, ['buy_now', 'bnpl'], true)
+                        ? $service->flow_type
+                        : 'buy_now';
+                }
+
                 return $row;
             });
 

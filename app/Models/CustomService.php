@@ -10,6 +10,7 @@ class CustomService extends Model
 
     protected $fillable = [
         'bundle_id',
+        'flow_type',
         'title',
         'service_amount',
         'quantity',

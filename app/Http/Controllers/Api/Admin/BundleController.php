@@ -730,6 +730,11 @@ public function index(Request $request)
             'service_amount' => $service['service_amount'] ?? 0,
         ];
 
+        if (Schema::hasColumn('custom_services', 'flow_type')) {
+            $flow = $service['flow_type'] ?? 'buy_now';
+            $row['flow_type'] = in_array($flow, ['buy_now', 'bnpl'], true) ? $flow : 'buy_now';
+        }
+
         if (!Schema::hasColumn('custom_services', 'quantity')) {
             return $row;
         }
@@ -759,6 +764,11 @@ public function index(Request $request)
             'title' => $service->title,
             'service_amount' => (float) ($service->service_amount ?? 0),
         ];
+        if (Schema::hasColumn('custom_services', 'flow_type')) {
+            $base['flow_type'] = in_array($service->flow_type, ['buy_now', 'bnpl'], true)
+                ? $service->flow_type
+                : 'buy_now';
+        }
         if (!Schema::hasColumn('custom_services', 'quantity')) {
             return $base;
         }

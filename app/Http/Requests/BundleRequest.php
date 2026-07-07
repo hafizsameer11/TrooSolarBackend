@@ -46,6 +46,7 @@ class BundleRequest extends FormRequest
             'custom_services.*.quantity' => 'nullable|integer|min:1',
             'custom_services.*.unit' => 'nullable|string|max:32',
             'custom_services.*.quantity_applies' => 'nullable|boolean',
+            'custom_services.*.flow_type' => 'nullable|string|in:buy_now,bnpl',
 
             'product_model' => 'nullable|string|max:65535',
             'system_capacity_display' => 'nullable|string|max:255',

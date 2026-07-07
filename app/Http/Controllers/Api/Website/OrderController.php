@@ -1377,7 +1377,7 @@ class OrderController extends Controller
 
             if (count($productLineItems) === 0) {
                 if ($bundle) {
-                    $bundleOrderLines = $this->buildBundleOrderListLineItems($bundle, $installerChoice);
+                    $bundleOrderLines = $this->buildBundleOrderListLineItems($bundle, $installerChoice, 'buy_now');
                     if (count($bundleOrderLines) > 0) {
                         $productLineItems = $bundleOrderLines;
                     }
@@ -1489,6 +1489,7 @@ class OrderController extends Controller
                 'total_amount' => $totalAmount,
                 'vat_amount' => $vatAmount,
                 'vat_percentage' => $vatPct,
+                'insurance_fee_percentage' => $insPct,
                 'total' => $grandTotal,
                 'order_type' => 'buy_now',
                 'installer_choice' => $installerChoice,
@@ -2043,7 +2044,7 @@ class OrderController extends Controller
      * @param  \Illuminate\Support\Collection<int, OrderItem>|\Illuminate\Database\Eloquent\Collection<int, OrderItem>  $orderItems
      * @return array<int, array{name: string, description: string, quantity: int, price: float, type?: string}>
      */
-    private function buildOrderSummaryItemsFromOrderItems($orderItems): array
+    private function buildOrderSummaryItemsFromOrderItems($orderItems, string $checkoutFlow = 'buy_now'): array
     {
         $items = [];
 
@@ -2055,7 +2056,7 @@ class OrderController extends Controller
 
             if ($itemable instanceof Bundles) {
                 $itemable->loadMissing(['bundleItems.product.category', 'customServices', 'bundleMaterials.material']);
-                $bundleOrderListItems = $this->buildOrderSummaryItemsFromBundleOrderList($itemable);
+                $bundleOrderListItems = $this->buildOrderSummaryItemsFromBundleOrderList($itemable, null, $checkoutFlow);
                 if (count($bundleOrderListItems) > 0) {
                     $orderQty = max(1, (int) ($orderItem->quantity ?? 1));
                     if ($orderQty > 1) {
@@ -2197,7 +2198,7 @@ class OrderController extends Controller
                     'subtotal' => $subtotal > 0 ? $subtotal : $unitPrice * $qty,
                 ]);
                 $fakeItem->setRelation('itemable', $bundle);
-                $bundleComponentItems = $this->buildOrderSummaryItemsFromOrderItems(collect([$fakeItem]));
+                $bundleComponentItems = $this->buildOrderSummaryItemsFromOrderItems(collect([$fakeItem]), 'bnpl');
                 if (! empty($bundleComponentItems)) {
                     $items = array_merge($items, $bundleComponentItems);
                     continue;
@@ -2331,17 +2332,59 @@ class OrderController extends Controller
         return true;
     }
 
+    private function resolveBundleCheckoutFlow(?Order $order = null, ?string $explicit = null): string
+    {
+        if ($explicit !== null && in_array($explicit, ['buy_now', 'bnpl'], true)) {
+            return $explicit;
+        }
+        if ($order !== null && ($order->order_type ?? null) === 'bnpl') {
+            return 'bnpl';
+        }
+
+        return 'buy_now';
+    }
+
+    private function customServiceMatchesCheckoutFlow($service, string $checkoutFlow): bool
+    {
+        if (! Schema::hasColumn('custom_services', 'flow_type')) {
+            return $checkoutFlow === 'buy_now';
+        }
+
+        $svcFlow = $service->flow_type ?? 'buy_now';
+
+        return in_array($svcFlow, ['buy_now', 'bnpl'], true)
+            ? $svcFlow === $checkoutFlow
+            : $checkoutFlow === 'buy_now';
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<int, \App\Models\CustomService>
+     */
+    private function bundleCustomServicesForCheckoutFlow(Bundles $bundle, string $checkoutFlow)
+    {
+        $checkoutFlow = $this->resolveBundleCheckoutFlow(null, $checkoutFlow);
+        $all = $bundle->customServices()->orderBy('id')->get();
+        $scoped = $all->filter(fn ($service) => $this->customServiceMatchesCheckoutFlow($service, $checkoutFlow));
+
+        if ($checkoutFlow === 'bnpl' && $scoped->isEmpty()) {
+            return $all->filter(fn ($service) => $this->customServiceMatchesCheckoutFlow($service, 'buy_now'));
+        }
+
+        return $scoped;
+    }
+
     /**
      * Real bundle order-list rows (custom [OL] services and/or bundle products) for invoices and summaries.
      *
      * @return array<int, array{product_id: null, description: string, quantity: int, unit: string, rate: float, total_cost: float}>
      */
-    private function buildBundleOrderListLineItems(Bundles $bundle, ?string $installerChoice = null): array
+    private function buildBundleOrderListLineItems(Bundles $bundle, ?string $installerChoice = null, string $checkoutFlow = 'buy_now'): array
     {
+        $checkoutFlow = $this->resolveBundleCheckoutFlow(null, $checkoutFlow);
         $bundle->loadMissing(['bundleItems.product', 'customServices', 'bundleMaterials.material']);
 
         $customOrderItems = [];
-        foreach ($bundle->customServices()->orderBy('id')->get() as $service) {
+        foreach ($this->bundleCustomServicesForCheckoutFlow($bundle, $checkoutFlow) as $service) {
             $rawTitle = (string) ($service->title ?? '');
             if (! $this->isBundleOrderListServiceTitle($rawTitle)) {
                 continue;
@@ -2570,8 +2613,9 @@ class OrderController extends Controller
      */
     private function buildInvoiceProductLineItemsFromOrder(Order $order, ?Bundles $bundle): array
     {
+        $checkoutFlow = $this->resolveBundleCheckoutFlow($order);
         if ($bundle) {
-            $lines = $this->buildBundleOrderListLineItems($bundle);
+            $lines = $this->buildBundleOrderListLineItems($bundle, null, $checkoutFlow);
             if (count($lines) > 0) {
                 return $lines;
             }
@@ -2627,10 +2671,10 @@ class OrderController extends Controller
     /**
      * @return array<int, array{name: string, description: string, quantity: int, price: float, type: string}>
      */
-    private function buildOrderSummaryItemsFromBundleOrderList(Bundles $bundle, ?string $installerChoice = null): array
+    private function buildOrderSummaryItemsFromBundleOrderList(Bundles $bundle, ?string $installerChoice = null, string $checkoutFlow = 'buy_now'): array
     {
         $items = [];
-        foreach ($this->buildBundleOrderListLineItems($bundle, $installerChoice) as $line) {
+        foreach ($this->buildBundleOrderListLineItems($bundle, $installerChoice, $checkoutFlow) as $line) {
             $items[] = [
                 'name' => (string) ($line['description'] ?? 'Item'),
                 'description' => (string) ($line['description'] ?? 'Item'),
@@ -2648,7 +2692,7 @@ class OrderController extends Controller
      *
      * @param  array<int, array{type: string, description: string, quantity: int, price: float}>|null  $bundleLineItemsOut
      */
-    private function calculateProductBreakdown($product, $bundle, $totalPrice, ?array &$bundleLineItemsOut = null): array
+    private function calculateProductBreakdown($product, $bundle, $totalPrice, ?array &$bundleLineItemsOut = null, string $checkoutFlow = 'buy_now'): array
     {
         if ($bundleLineItemsOut !== null) {
             $bundleLineItemsOut = [];
@@ -2781,7 +2825,7 @@ class OrderController extends Controller
                     $hasBuiltLineItems = true;
                 }
             } else {
-                $orderListLines = $this->buildBundleOrderListLineItems($bundle);
+                $orderListLines = $this->buildBundleOrderListLineItems($bundle, null, $checkoutFlow);
                 if (count($orderListLines) > 0) {
                     if ($bundleLineItemsOut !== null) {
                         foreach ($orderListLines as $row) {
@@ -3023,7 +3067,7 @@ class OrderController extends Controller
             $backupTime = null;
 
             $order->loadMissing(['items.itemable']);
-            $persistedItems = $this->buildOrderSummaryItemsFromOrderItems($order->items);
+            $persistedItems = $this->buildOrderSummaryItemsFromOrderItems($order->items, $this->resolveBundleCheckoutFlow($order));
 
             try {
                 if (count($persistedItems) > 0) {
@@ -3040,7 +3084,7 @@ class OrderController extends Controller
                 } elseif ($resolvedBundle) {
                     $bundle = $resolvedBundle;
                     $bundle->loadMissing(['bundleItems.product.category', 'customServices', 'bundleMaterials.material']);
-                    $items = $this->buildOrderSummaryItemsFromBundleOrderList($bundle);
+                    $items = $this->buildOrderSummaryItemsFromBundleOrderList($bundle, null, $this->resolveBundleCheckoutFlow($order));
 
                     if (count($items) === 0) {
                         $bundleItems = $bundle->bundleItems()->with('product.category')->get();
@@ -3310,6 +3354,7 @@ class OrderController extends Controller
             }
 
             $bundleLineItems = [];
+            $invoiceCheckoutFlow = $this->resolveBundleCheckoutFlow($order);
             if ($productOrderItems->count() > 1) {
                 $multiLines = [];
                 foreach ($productOrderItems as $orderItem) {
@@ -3332,14 +3377,16 @@ class OrderController extends Controller
                     $product,
                     null,
                     $catalogItemsSubtotal,
-                    $bundleLineItems
+                    $bundleLineItems,
+                    $invoiceCheckoutFlow
                 );
             } else {
                 $productBreakdown = $this->calculateProductBreakdown(
                     $product,
                     $invoiceBundle,
                     $catalogItemsSubtotal,
-                    $bundleLineItems
+                    $bundleLineItems,
+                    $invoiceCheckoutFlow
                 );
             }
 
