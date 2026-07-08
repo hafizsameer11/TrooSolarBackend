@@ -1323,11 +1323,15 @@ class OrderController extends Controller
             // Product-only (battery/inverter/panels): fees from checkout settings by category.
             if (! $bundle) {
                 $deliveryFee = $checkoutSettings->deliveryFeeForCategory($productCategory);
-                $inspectionFeeFromBundle = $checkoutSettings->inspectionFeeForCategory($productCategory);
                 if ($installerChoice === 'troosolar') {
                     $installationFee = $checkoutSettings->installationFeeForCategory($productCategory);
+                    $inspectionFeeFromBundle = $checkoutSettings->inspectionFeeForCategory($productCategory);
                 } else {
                     $installationFee = 0.0;
+                    // Own Installer: inspection only when materials checkbox is checked.
+                    $inspectionFeeFromBundle = $includeInstallationMaterial
+                        ? $checkoutSettings->inspectionFeeForCategory($productCategory)
+                        : 0.0;
                 }
                 if ($installerChoice === 'own' && $includeInstallationMaterial) {
                     $materialCost = $checkoutSettings->materialsFeeForCategory($productCategory);
@@ -1340,6 +1344,9 @@ class OrderController extends Controller
 
             if ($installerChoice !== 'troosolar') {
                 $installationFee = 0;
+                if (! $includeInstallationMaterial) {
+                    $inspectionFee = 0;
+                }
             }
 
             // Insurance fee: % of catalog items subtotal (before outright discount), not after discount.
