@@ -17,6 +17,7 @@ class CheckoutSetting extends Model
         'vat_percentage',
         'insurance_fee_percentage',
         'installation_flat_addon',
+        'installation_materials_cost',
         'installation_schedule_working_days',
         'installation_description',
     ];
@@ -30,6 +31,7 @@ class CheckoutSetting extends Model
         'vat_percentage' => 'decimal:2',
         'insurance_fee_percentage' => 'decimal:2',
         'installation_flat_addon' => 'integer',
+        'installation_materials_cost' => 'integer',
         'installation_schedule_working_days' => 'integer',
     ];
 
@@ -48,6 +50,7 @@ class CheckoutSetting extends Model
                 'vat_percentage' => (float) config('checkout.vat_percentage', 7.5),
                 'insurance_fee_percentage' => (float) config('checkout.insurance_fee_percentage', 3),
                 'installation_flat_addon' => (int) config('checkout.installation_flat_addon', 0),
+                'installation_materials_cost' => (int) config('checkout.installation_materials_cost', 0),
                 'installation_schedule_working_days' => (int) config('checkout.installation_schedule_working_days', 7),
                 'installation_description' => (string) config('checkout.installation_text', ''),
             ]);

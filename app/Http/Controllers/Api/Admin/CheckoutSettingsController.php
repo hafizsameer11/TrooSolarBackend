@@ -29,6 +29,7 @@ class CheckoutSettingsController extends Controller
             'vat_percentage' => (float) ($s->vat_percentage ?? config('checkout.vat_percentage', 7.5)),
             'insurance_fee_percentage' => (float) ($s->insurance_fee_percentage ?? config('checkout.insurance_fee_percentage', 3)),
             'installation_flat_addon' => (int) ($s->installation_flat_addon ?? 0),
+            'installation_materials_cost' => (int) ($s->installation_materials_cost ?? 0),
             'installation_schedule_working_days' => (int) $s->installation_schedule_working_days,
             'installation_description' => (string) ($s->installation_description ?? ''),
             'preview' => [
@@ -80,6 +81,7 @@ class CheckoutSettingsController extends Controller
                 'vat_percentage' => 'nullable|numeric|min:0|max:100',
                 'insurance_fee_percentage' => 'nullable|numeric|min:0|max:100',
                 'installation_flat_addon' => 'nullable|integer|min:0|max:100000000',
+                'installation_materials_cost' => 'nullable|integer|min:0|max:100000000',
                 'installation_schedule_working_days' => 'nullable|integer|min:1|max:90',
                 'installation_description' => 'nullable|string|max:5000',
             ]);
@@ -115,6 +117,9 @@ class CheckoutSettingsController extends Controller
             }
             if ($request->has('installation_flat_addon')) {
                 $s->installation_flat_addon = (int) $request->installation_flat_addon;
+            }
+            if ($request->has('installation_materials_cost')) {
+                $s->installation_materials_cost = (int) $request->installation_materials_cost;
             }
             if ($request->has('installation_schedule_working_days')) {
                 $s->installation_schedule_working_days = (int) $request->installation_schedule_working_days;

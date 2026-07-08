@@ -1316,7 +1316,13 @@ class OrderController extends Controller
             }
 
             // Calculate fees
-            $materialCost = $bundleCustomFees['material_cost'];
+            $materialCost = $bundle
+                ? $bundleCustomFees['material_cost']
+                : 0.0;
+            // Product-only (battery/inverter/panels): materials fee from checkout settings when Own Installer opts in.
+            if (! $bundle && $installerChoice === 'own' && $includeInstallationMaterial) {
+                $materialCost = max(0, (float) ($checkoutSettings->installation_materials_cost ?? 0));
+            }
             $inspectionFee = $inspectionFeeFromBundle;
             $insuranceFee = 0;
             $addOnsTotal = 0;

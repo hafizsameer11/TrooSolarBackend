@@ -166,6 +166,8 @@ class ConfigurationController extends Controller
                 'product_categories' => CheckoutSetting::productCategoryDefinitions(),
                 'vat_percentage' => (float) ($s->vat_percentage ?? config('checkout.vat_percentage', 7.5)),
                 'insurance_fee_percentage' => (float) ($s->insurance_fee_percentage ?? config('checkout.insurance_fee_percentage', 3)),
+                'installation_flat_addon' => (int) ($s->installation_flat_addon ?? 0),
+                'installation_materials_cost' => (int) ($s->installation_materials_cost ?? 0),
                 'delivery_estimate_label' => $window['label'],
                 'delivery_estimated_from' => $window['estimated_from'],
                 'delivery_estimated_to' => $window['estimated_to'],
