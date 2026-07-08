@@ -18,44 +18,9 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script_stop: true
           command_timeout: 15m
-          envs: DEPLOY_BACKEND_PATH
           script: |
             set -euo pipefail
+            # deploy-troosolar-backend already runs:
+            # git pull, composer install, php artisan migrate --force,
+            # optimize, and php-fpm reload.
             sudo /usr/local/bin/deploy-troosolar-backend
-
-            # Run Laravel migrations automatically after code deploy.
-            BACKEND_DIR="${DEPLOY_BACKEND_PATH:-}"
-            if [ -z "$BACKEND_DIR" ] || [ ! -f "$BACKEND_DIR/artisan" ]; then
-              for candidate in \
-                /var/www/troosolar-backend \
-                /var/www/TrooSolarBackend \
-                /var/www/api.troosolar.com \
-                /var/www/html \
-                /home/*/api.troosolar.com \
-                /home/*/troosolar-backend \
-                /home/*/TrooSolarBackend \
-                /home/*/Troosolar_backend; do
-                if [ -f "$candidate/artisan" ]; then
-                  BACKEND_DIR="$candidate"
-                  break
-                fi
-              done
-            fi
-
-            if [ -z "${BACKEND_DIR:-}" ] || [ ! -f "$BACKEND_DIR/artisan" ]; then
-              echo "ERROR: Could not find Laravel artisan after deploy. Set GitHub secret DEPLOY_BACKEND_PATH to the app root." >&2
-              exit 1
-            fi
-
-            echo "Running migrations in: $BACKEND_DIR"
-            cd "$BACKEND_DIR"
-
-            if id www-data >/dev/null 2>&1; then
-              sudo -u www-data php artisan migrate --force --no-interaction
-            else
-              php artisan migrate --force --no-interaction
-            fi
-
-            echo "Migrations completed successfully."
-        env:
-          DEPLOY_BACKEND_PATH: ${{ secrets.DEPLOY_BACKEND_PATH }}
