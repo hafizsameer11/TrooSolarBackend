@@ -11,6 +11,9 @@ class CheckoutSetting extends Model
     protected $fillable = [
         'delivery_fee',
         'category_delivery_fees',
+        'category_installation_fees',
+        'category_materials_fees',
+        'category_inspection_fees',
         'delivery_min_working_days',
         'delivery_max_working_days',
         'insurance_fee',
@@ -25,6 +28,9 @@ class CheckoutSetting extends Model
     protected $casts = [
         'delivery_fee' => 'integer',
         'category_delivery_fees' => 'array',
+        'category_installation_fees' => 'array',
+        'category_materials_fees' => 'array',
+        'category_inspection_fees' => 'array',
         'delivery_min_working_days' => 'integer',
         'delivery_max_working_days' => 'integer',
         'insurance_fee' => 'integer',
@@ -70,21 +76,64 @@ class CheckoutSetting extends Model
      */
     public function deliveryFeeForCategory(?string $productCategory): float
     {
+        return $this->feeForCategory($productCategory, 'category_delivery_fees', (float) ($this->delivery_fee ?? 0));
+    }
+
+    /** Installation fee for TrooSolar installer on product-only category checkouts. */
+    public function installationFeeForCategory(?string $productCategory): float
+    {
+        return $this->feeForCategory($productCategory, 'category_installation_fees', (float) ($this->installation_flat_addon ?? 0));
+    }
+
+    /** Materials fee when Own Installer opts into installation materials (product-only). */
+    public function materialsFeeForCategory(?string $productCategory): float
+    {
+        return $this->feeForCategory($productCategory, 'category_materials_fees', (float) ($this->installation_materials_cost ?? 0));
+    }
+
+    /** Inspection fee for TrooSolar installer on product-only category checkouts. */
+    public function inspectionFeeForCategory(?string $productCategory): float
+    {
+        return $this->feeForCategory($productCategory, 'category_inspection_fees', 0.0);
+    }
+
+    private function feeForCategory(?string $productCategory, string $column, float $globalFallback): float
+    {
         $key = trim((string) ($productCategory ?? ''));
-        $fees = is_array($this->category_delivery_fees) ? $this->category_delivery_fees : [];
+        $fees = is_array($this->{$column} ?? null) ? $this->{$column} : [];
 
         if ($key !== '' && array_key_exists($key, $fees) && $fees[$key] !== null && $fees[$key] !== '') {
             return max(0, (float) $fees[$key]);
         }
 
-        return max(0, (float) ($this->delivery_fee ?? 0));
+        return max(0, $globalFallback);
     }
 
     /** Normalized map keyed by product category slug. */
     public function normalizedCategoryDeliveryFees(): array
     {
+        return $this->normalizedCategoryFeeMap('category_delivery_fees', (int) ($this->delivery_fee ?? 0));
+    }
+
+    public function normalizedCategoryInstallationFees(): array
+    {
+        return $this->normalizedCategoryFeeMap('category_installation_fees', (int) ($this->installation_flat_addon ?? 0));
+    }
+
+    public function normalizedCategoryMaterialsFees(): array
+    {
+        return $this->normalizedCategoryFeeMap('category_materials_fees', (int) ($this->installation_materials_cost ?? 0));
+    }
+
+    public function normalizedCategoryInspectionFees(): array
+    {
+        return $this->normalizedCategoryFeeMap('category_inspection_fees', 0);
+    }
+
+    private function normalizedCategoryFeeMap(string $column, int $globalFallback): array
+    {
         $defs = self::productCategoryDefinitions();
-        $stored = is_array($this->category_delivery_fees) ? $this->category_delivery_fees : [];
+        $stored = is_array($this->{$column} ?? null) ? $this->{$column} : [];
         $out = [];
 
         foreach ($defs as $def) {
@@ -94,7 +143,7 @@ class CheckoutSetting extends Model
             }
             $out[$slug] = array_key_exists($slug, $stored)
                 ? max(0, (int) $stored[$slug])
-                : max(0, (int) ($this->delivery_fee ?? 0));
+                : max(0, $globalFallback);
         }
 
         return $out;

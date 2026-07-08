@@ -16,11 +16,13 @@ class CheckoutSettingsController extends Controller
     {
         $window = CheckoutPricing::deliveryWindow($s);
         $categoryDefs = CheckoutSetting::productCategoryDefinitions();
-        $categoryFees = $s->normalizedCategoryDeliveryFees();
 
         return [
             'delivery_fee' => (int) $s->delivery_fee,
-            'category_delivery_fees' => $categoryFees,
+            'category_delivery_fees' => $s->normalizedCategoryDeliveryFees(),
+            'category_installation_fees' => $s->normalizedCategoryInstallationFees(),
+            'category_materials_fees' => $s->normalizedCategoryMaterialsFees(),
+            'category_inspection_fees' => $s->normalizedCategoryInspectionFees(),
             'product_categories' => $categoryDefs,
             'delivery_min_working_days' => (int) $s->delivery_min_working_days,
             'delivery_max_working_days' => (int) $s->delivery_max_working_days,
@@ -39,6 +41,18 @@ class CheckoutSettingsController extends Controller
                 'installation_estimated_date' => CheckoutPricing::installationEstimatedDate($s),
             ],
         ];
+    }
+
+    private function normalizeCategoryFeePayload(array $incoming, array $categoryKeys): array
+    {
+        $normalized = [];
+        foreach ($categoryKeys as $key) {
+            if (array_key_exists($key, $incoming)) {
+                $normalized[$key] = max(0, (int) $incoming[$key]);
+            }
+        }
+
+        return $normalized;
     }
 
     /**
@@ -75,6 +89,12 @@ class CheckoutSettingsController extends Controller
                 'delivery_fee' => 'nullable|integer|min:0|max:100000000',
                 'category_delivery_fees' => 'nullable|array',
                 'category_delivery_fees.*' => 'nullable|integer|min:0|max:100000000',
+                'category_installation_fees' => 'nullable|array',
+                'category_installation_fees.*' => 'nullable|integer|min:0|max:100000000',
+                'category_materials_fees' => 'nullable|array',
+                'category_materials_fees.*' => 'nullable|integer|min:0|max:100000000',
+                'category_inspection_fees' => 'nullable|array',
+                'category_inspection_fees.*' => 'nullable|integer|min:0|max:100000000',
                 'delivery_min_working_days' => 'nullable|integer|min:1|max:90',
                 'delivery_max_working_days' => 'nullable|integer|min:1|max:90',
                 'insurance_fee' => 'nullable|integer|min:0|max:100000000',
@@ -91,14 +111,28 @@ class CheckoutSettingsController extends Controller
                 $s->delivery_fee = (int) $request->delivery_fee;
             }
             if ($request->has('category_delivery_fees') && is_array($request->category_delivery_fees)) {
-                $incoming = $request->category_delivery_fees;
-                $normalized = [];
-                foreach ($categoryKeys as $key) {
-                    if (array_key_exists($key, $incoming)) {
-                        $normalized[$key] = max(0, (int) $incoming[$key]);
-                    }
-                }
-                $s->category_delivery_fees = $normalized;
+                $s->category_delivery_fees = $this->normalizeCategoryFeePayload(
+                    $request->category_delivery_fees,
+                    $categoryKeys
+                );
+            }
+            if ($request->has('category_installation_fees') && is_array($request->category_installation_fees)) {
+                $s->category_installation_fees = $this->normalizeCategoryFeePayload(
+                    $request->category_installation_fees,
+                    $categoryKeys
+                );
+            }
+            if ($request->has('category_materials_fees') && is_array($request->category_materials_fees)) {
+                $s->category_materials_fees = $this->normalizeCategoryFeePayload(
+                    $request->category_materials_fees,
+                    $categoryKeys
+                );
+            }
+            if ($request->has('category_inspection_fees') && is_array($request->category_inspection_fees)) {
+                $s->category_inspection_fees = $this->normalizeCategoryFeePayload(
+                    $request->category_inspection_fees,
+                    $categoryKeys
+                );
             }
             if ($request->has('delivery_min_working_days')) {
                 $s->delivery_min_working_days = (int) $request->delivery_min_working_days;

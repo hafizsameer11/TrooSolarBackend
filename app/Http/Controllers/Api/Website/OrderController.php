@@ -1319,9 +1319,20 @@ class OrderController extends Controller
             $materialCost = $bundle
                 ? $bundleCustomFees['material_cost']
                 : 0.0;
-            // Product-only (battery/inverter/panels): materials fee from checkout settings when Own Installer opts in.
-            if (! $bundle && $installerChoice === 'own' && $includeInstallationMaterial) {
-                $materialCost = max(0, (float) ($checkoutSettings->installation_materials_cost ?? 0));
+            $productCategory = $data['product_category'] ?? null;
+            // Product-only (battery/inverter/panels): fees from checkout settings by category.
+            if (! $bundle) {
+                $deliveryFee = $checkoutSettings->deliveryFeeForCategory($productCategory);
+                if ($installerChoice === 'troosolar') {
+                    $installationFee = $checkoutSettings->installationFeeForCategory($productCategory);
+                    $inspectionFeeFromBundle = $checkoutSettings->inspectionFeeForCategory($productCategory);
+                } else {
+                    $installationFee = 0.0;
+                    $inspectionFeeFromBundle = 0.0;
+                }
+                if ($installerChoice === 'own' && $includeInstallationMaterial) {
+                    $materialCost = $checkoutSettings->materialsFeeForCategory($productCategory);
+                }
             }
             $inspectionFee = $inspectionFeeFromBundle;
             $insuranceFee = 0;
