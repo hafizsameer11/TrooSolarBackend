@@ -99,6 +99,111 @@ class CheckoutSetting extends Model
         return $this->feeForCategory($productCategory, 'category_inspection_fees', 0.0);
     }
 
+    /**
+     * Sum a fee type across multiple product-only category keys (e.g. battery + inverter).
+     *
+     * @param  array<int, string>  $categoryKeys
+     */
+    public function sumProductCategoryFees(array $categoryKeys, string $feeType, ?string $fallbackCategory = null): float
+    {
+        $keys = array_values(array_unique(array_filter(array_map(
+            static fn ($key) => trim((string) $key),
+            $categoryKeys
+        ))));
+
+        if ($keys === [] && $fallbackCategory) {
+            $fallback = trim((string) $fallbackCategory);
+            if ($fallback !== '') {
+                $keys = [$fallback];
+            }
+        }
+
+        if ($keys === []) {
+            return 0.0;
+        }
+
+        $sum = 0.0;
+        foreach ($keys as $key) {
+            $sum += match ($feeType) {
+                'delivery' => $this->deliveryFeeForCategory($key),
+                'installation' => $this->installationFeeForCategory($key),
+                'materials' => $this->materialsFeeForCategory($key),
+                'inspection' => $this->inspectionFeeForCategory($key),
+                default => 0.0,
+            };
+        }
+
+        return $sum;
+    }
+
+    /**
+     * Map a catalog product to a Buy Now product-only fee category slug.
+     */
+    public static function inferProductFeeCategory(?Product $product): ?string
+    {
+        if (! $product) {
+            return null;
+        }
+
+        $title = strtolower(trim((string) ($product->title ?? '')));
+        $categoryTitle = strtolower(trim((string) ($product->category->title ?? '')));
+
+        $isBatteryTitle = str_contains($title, 'battery')
+            || str_contains($title, 'batteries')
+            || str_contains($title, 'lithium')
+            || str_contains($title, 'rack');
+        $isBatteryCategory = str_contains($categoryTitle, 'battery')
+            || str_contains($categoryTitle, 'batteries')
+            || str_contains($categoryTitle, 'lithium')
+            || str_contains($categoryTitle, 'rack');
+        $isInverterTitle = str_contains($title, 'inverter');
+        $isInverterCategory = str_contains($categoryTitle, 'inverter');
+        $isPanelTitle = str_contains($title, 'panel') || str_contains($title, 'pv');
+        $isPanelCategory = str_contains($categoryTitle, 'panel') || str_contains($categoryTitle, 'pv');
+        $isKwhTitle = str_contains($title, 'kwh');
+        $isAllInOneSystem = str_contains($title, 'all in one')
+            || str_contains($title, 'all-in-one')
+            || str_contains($title, 'aio')
+            || str_contains($title, 'system');
+        $isAllInOneCategory = str_contains($categoryTitle, 'all in one')
+            || str_contains($categoryTitle, 'all-in-one')
+            || str_contains($categoryTitle, 'aio')
+            || str_contains($categoryTitle, 'system');
+
+        if (
+            ($isPanelTitle || $isPanelCategory)
+            && ! $isInverterTitle
+            && ! $isBatteryTitle
+            && ! $isInverterCategory
+            && ! $isBatteryCategory
+        ) {
+            return 'panels-only';
+        }
+
+        if (
+            ($isInverterTitle || $isInverterCategory)
+            && ! $isBatteryTitle
+            && ! $isPanelTitle
+            && ! $isBatteryCategory
+            && ! $isPanelCategory
+        ) {
+            return 'inverter-only';
+        }
+
+        if (
+            ($isBatteryTitle || $isBatteryCategory || $isKwhTitle)
+            && ! $isPanelTitle
+            && ! $isPanelCategory
+            && ! $isAllInOneSystem
+            && ! $isAllInOneCategory
+            && ! ($isInverterTitle && ! $isKwhTitle)
+        ) {
+            return 'battery-only';
+        }
+
+        return null;
+    }
+
     private function feeForCategory(?string $productCategory, string $column, float $globalFallback): float
     {
         $key = trim((string) ($productCategory ?? ''));

@@ -1320,36 +1320,61 @@ class OrderController extends Controller
                 ? $bundleCustomFees['material_cost']
                 : 0.0;
             $productCategory = $data['product_category'] ?? null;
+            $deliveryFeeBeforeProductOnly = $deliveryFee;
             // Product-only (battery/inverter/panels): fees from checkout settings by category.
             if (! $bundle) {
-                $deliveryFee = $checkoutSettings->deliveryFeeForCategory($productCategory);
+                $feeCategoryKeys = $this->resolveProductFeeCategoryKeys($productIds, $productCategory);
+                if ($feeCategoryKeys === [] && $productId) {
+                    $singleProduct = $product ?? Product::with('category')->find($productId);
+                    $inferred = CheckoutSetting::inferProductFeeCategory($singleProduct);
+                    if ($inferred) {
+                        $feeCategoryKeys = [$inferred];
+                    }
+                }
+
+                if ($deliveryFeeBeforeProductOnly <= 0) {
+                    $deliveryFee = $checkoutSettings->sumProductCategoryFees(
+                        $feeCategoryKeys,
+                        'delivery',
+                        $productCategory
+                    );
+                }
+
+                $sumInstallation = $checkoutSettings->sumProductCategoryFees(
+                    $feeCategoryKeys,
+                    'installation',
+                    $productCategory
+                );
+                $sumInspection = $checkoutSettings->sumProductCategoryFees(
+                    $feeCategoryKeys,
+                    'inspection',
+                    $productCategory
+                );
+                $sumMaterials = $checkoutSettings->sumProductCategoryFees(
+                    $feeCategoryKeys,
+                    'materials',
+                    $productCategory
+                );
+
                 if ($installerChoice === 'troosolar') {
-                    $installationFee = $checkoutSettings->installationFeeForCategory($productCategory);
-                    $inspectionFeeFromBundle = $checkoutSettings->inspectionFeeForCategory($productCategory);
+                    $installationFee = $sumInstallation;
+                    $inspectionFeeFromBundle = $sumInspection;
+                    $materialCost = $sumMaterials;
+                } elseif ($includeInstallationMaterial) {
+                    $installationFee = $sumInstallation;
+                    $materialCost = $sumMaterials;
+                    $ownGetsInspection = (bool) ($checkoutSettings->own_installer_include_inspection ?? false);
+                    $inspectionFeeFromBundle = $ownGetsInspection ? $sumInspection : 0.0;
                 } else {
                     $installationFee = 0.0;
-                    // Own Installer: inspection only if Admin enabled it AND materials checkbox is checked.
-                    $ownGetsInspection = (bool) ($checkoutSettings->own_installer_include_inspection ?? false);
-                    $inspectionFeeFromBundle = ($ownGetsInspection && $includeInstallationMaterial)
-                        ? $checkoutSettings->inspectionFeeForCategory($productCategory)
-                        : 0.0;
-                }
-                if ($installerChoice === 'own' && $includeInstallationMaterial) {
-                    $materialCost = $checkoutSettings->materialsFeeForCategory($productCategory);
+                    $materialCost = 0.0;
+                    $inspectionFeeFromBundle = 0.0;
                 }
             }
             $inspectionFee = $inspectionFeeFromBundle;
             $insuranceFee = 0;
             $addOnsTotal = 0;
             $addOns = [];
-
-            if ($installerChoice !== 'troosolar') {
-                $installationFee = 0;
-                $ownGetsInspection = (bool) ($checkoutSettings->own_installer_include_inspection ?? false);
-                if (! $ownGetsInspection || ! $includeInstallationMaterial) {
-                    $inspectionFee = 0;
-                }
-            }
 
             // Insurance fee: % of catalog items subtotal (before outright discount), not after discount.
             $insPct = (float) ($checkoutSettings->insurance_fee_percentage ?? config('checkout.insurance_fee_percentage', 3));
@@ -2984,6 +3009,33 @@ class OrderController extends Controller
         }
 
         return $rows;
+    }
+
+    /**
+     * @param  array<int, int>  $productIds
+     * @return array<int, string>
+     */
+    private function resolveProductFeeCategoryKeys(array $productIds, ?string $fallbackCategory = null): array
+    {
+        $keys = [];
+
+        foreach ($productIds as $productId) {
+            $product = Product::with('category')->find($productId);
+            $inferred = CheckoutSetting::inferProductFeeCategory($product);
+            if ($inferred) {
+                $keys[] = $inferred;
+            }
+        }
+
+        $keys = array_values(array_unique($keys));
+        if ($keys === [] && $fallbackCategory) {
+            $fallback = trim((string) $fallbackCategory);
+            if ($fallback !== '') {
+                $keys = [$fallback];
+            }
+        }
+
+        return $keys;
     }
 
     /**
