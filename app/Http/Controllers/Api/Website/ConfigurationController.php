@@ -166,6 +166,7 @@ class ConfigurationController extends Controller
                 'category_installation_fees' => $s->normalizedCategoryInstallationFees(),
                 'category_materials_fees' => $s->normalizedCategoryMaterialsFees(),
                 'category_inspection_fees' => $s->normalizedCategoryInspectionFees(),
+                'own_installer_include_inspection' => (bool) ($s->own_installer_include_inspection ?? false),
                 'product_categories' => CheckoutSetting::productCategoryDefinitions(),
                 'vat_percentage' => (float) ($s->vat_percentage ?? config('checkout.vat_percentage', 7.5)),
                 'insurance_fee_percentage' => (float) ($s->insurance_fee_percentage ?? config('checkout.insurance_fee_percentage', 3)),

@@ -1328,8 +1328,9 @@ class OrderController extends Controller
                     $inspectionFeeFromBundle = $checkoutSettings->inspectionFeeForCategory($productCategory);
                 } else {
                     $installationFee = 0.0;
-                    // Own Installer: inspection only when materials checkbox is checked.
-                    $inspectionFeeFromBundle = $includeInstallationMaterial
+                    // Own Installer: inspection only if Admin enabled it AND materials checkbox is checked.
+                    $ownGetsInspection = (bool) ($checkoutSettings->own_installer_include_inspection ?? false);
+                    $inspectionFeeFromBundle = ($ownGetsInspection && $includeInstallationMaterial)
                         ? $checkoutSettings->inspectionFeeForCategory($productCategory)
                         : 0.0;
                 }
@@ -1344,7 +1345,8 @@ class OrderController extends Controller
 
             if ($installerChoice !== 'troosolar') {
                 $installationFee = 0;
-                if (! $includeInstallationMaterial) {
+                $ownGetsInspection = (bool) ($checkoutSettings->own_installer_include_inspection ?? false);
+                if (! $ownGetsInspection || ! $includeInstallationMaterial) {
                     $inspectionFee = 0;
                 }
             }

@@ -23,6 +23,7 @@ class CheckoutSettingsController extends Controller
             'category_installation_fees' => $s->normalizedCategoryInstallationFees(),
             'category_materials_fees' => $s->normalizedCategoryMaterialsFees(),
             'category_inspection_fees' => $s->normalizedCategoryInspectionFees(),
+            'own_installer_include_inspection' => (bool) ($s->own_installer_include_inspection ?? false),
             'product_categories' => $categoryDefs,
             'delivery_min_working_days' => (int) $s->delivery_min_working_days,
             'delivery_max_working_days' => (int) $s->delivery_max_working_days,
@@ -95,6 +96,7 @@ class CheckoutSettingsController extends Controller
                 'category_materials_fees.*' => 'nullable|integer|min:0|max:100000000',
                 'category_inspection_fees' => 'nullable|array',
                 'category_inspection_fees.*' => 'nullable|integer|min:0|max:100000000',
+                'own_installer_include_inspection' => 'nullable|boolean',
                 'delivery_min_working_days' => 'nullable|integer|min:1|max:90',
                 'delivery_max_working_days' => 'nullable|integer|min:1|max:90',
                 'insurance_fee' => 'nullable|integer|min:0|max:100000000',
@@ -133,6 +135,9 @@ class CheckoutSettingsController extends Controller
                     $request->category_inspection_fees,
                     $categoryKeys
                 );
+            }
+            if ($request->has('own_installer_include_inspection')) {
+                $s->own_installer_include_inspection = (bool) $request->boolean('own_installer_include_inspection');
             }
             if ($request->has('delivery_min_working_days')) {
                 $s->delivery_min_working_days = (int) $request->delivery_min_working_days;
