@@ -1299,9 +1299,8 @@ class OrderController extends Controller
             );
 
             if ($bundle) {
-                $deliveryFee = $bundleCustomFees['delivery_fee'] > 0
-                    ? $bundleCustomFees['delivery_fee']
-                    : $deliveryFee;
+                // Bundle fees come only from Bundle Mgt -> Invoice fees, never global/state checkout settings.
+                $deliveryFee = $bundleCustomFees['delivery_fee'];
                 $installationFee = $bundleCustomFees['installation_fee'];
                 $inspectionFeeFromBundle = $bundleCustomFees['inspection_fee'];
             } else {
