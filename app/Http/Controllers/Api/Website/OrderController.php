@@ -87,6 +87,41 @@ class OrderController extends Controller
         $vat = Schema::hasColumn('orders', 'vat_amount') ? (float) ($order->vat_amount ?? 0) : 0.0;
         $storedTotal = (float) ($order->total_price ?? 0);
         $discount = max(0.0, round($catalogItemsSubtotal - $itemsAfter, 2));
+        $isBuyNow = strtolower((string) ($order->order_type ?? '')) === 'buy_now';
+
+        // Buy Now receipts: trust stored catalog lines + fee columns; do not back-solve
+        // net totals from grand_total (avoids inflating product subtotal when fees mismatch).
+        if ($isBuyNow && $catalogItemsSubtotal > 0.005) {
+            $sumBeforeVat = round($itemsAfter + $fees, 2);
+            if ($vat <= 0.005 && $sumBeforeVat > 0) {
+                $vat = (float) CheckoutPricing::vatAmount($sumBeforeVat, $vatPct);
+            }
+            $grandTotal = $storedTotal > 0
+                ? $storedTotal
+                : round($sumBeforeVat + $vat, 2);
+
+            $discountPct = null;
+            if ($discount > 0.005 && $catalogItemsSubtotal > 0) {
+                $discountPct = round(100 * ($discount / $catalogItemsSubtotal), 2);
+            }
+
+            return [
+                'catalog_items_subtotal' => round($catalogItemsSubtotal, 2),
+                'outright_discount_amount' => $discount > 0.005 ? round($discount, 2) : 0.0,
+                'outright_discount_percentage' => $discountPct,
+                'items_subtotal_after_discount' => round($itemsAfter, 2),
+                'delivery_fee' => $delivery,
+                'installation_fee' => $installation,
+                'insurance_fee' => $insurance,
+                'material_cost' => $material,
+                'inspection_fee' => $inspection,
+                'fees_total' => $fees,
+                'sum_before_vat' => $sumBeforeVat,
+                'vat_amount' => round($vat, 2),
+                'vat_percentage' => $vatPct,
+                'grand_total' => round($grandTotal, 2),
+            ];
+        }
 
         if ($storedTotal > 0) {
             $postFees = round($storedTotal - $fees, 2);
@@ -1320,7 +1355,6 @@ class OrderController extends Controller
                 ? $bundleCustomFees['material_cost']
                 : 0.0;
             $productCategory = $data['product_category'] ?? null;
-            $deliveryFeeBeforeProductOnly = $deliveryFee;
             // Product-only (battery/inverter/panels): fees from checkout settings by category.
             if (! $bundle) {
                 $feeCategoryKeys = $this->resolveProductFeeCategoryKeys($productIds, $productCategory);
@@ -1332,13 +1366,12 @@ class OrderController extends Controller
                     }
                 }
 
-                if ($deliveryFeeBeforeProductOnly <= 0) {
-                    $deliveryFee = $checkoutSettings->sumProductCategoryFees(
-                        $feeCategoryKeys,
-                        'delivery',
-                        $productCategory
-                    );
-                }
+                // Sum per product category — do not use state/location delivery defaults here.
+                $deliveryFee = $checkoutSettings->sumProductCategoryFees(
+                    $feeCategoryKeys,
+                    'delivery',
+                    $productCategory
+                );
 
                 $sumInstallation = $checkoutSettings->sumProductCategoryFees(
                     $feeCategoryKeys,
@@ -1369,6 +1402,10 @@ class OrderController extends Controller
                     $materialCost = 0.0;
                     $inspectionFeeFromBundle = 0.0;
                 }
+            } elseif ($installerChoice !== 'troosolar') {
+                // Non product-only own installer: never charge TrooSolar installation/inspection.
+                $installationFee = 0.0;
+                $inspectionFeeFromBundle = 0.0;
             }
             $inspectionFee = $inspectionFeeFromBundle;
             $insuranceFee = 0;
