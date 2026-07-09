@@ -959,6 +959,32 @@ class OrderController extends Controller
         return [];
     }
 
+    private function resolvePublicImageUrl(?string $featured): ?string
+    {
+        if ($featured === null || trim($featured) === '') {
+            return null;
+        }
+
+        $featured = trim($featured);
+        if (Str::startsWith($featured, ['http://', 'https://'])) {
+            return $featured;
+        }
+
+        if (Str::startsWith($featured, '/storage/')) {
+            return url($featured);
+        }
+
+        if (Str::startsWith($featured, 'storage/')) {
+            return url('/'.$featured);
+        }
+
+        if (Str::startsWith($featured, '/')) {
+            return url($featured);
+        }
+
+        return url(\Illuminate\Support\Facades\Storage::url($featured));
+    }
+
     private function formatOrderItem(OrderItem $item, ?Order $order = null): array
     {
         $itemable = $item->itemable; // Product | Bundles | null
@@ -966,15 +992,28 @@ class OrderController extends Controller
         // Resolve image with fallback (bundle → first product’s image)
         $featured = null;
         if ($itemable) {
-            $featured = $itemable->featured_image_url
-                ?? ($itemable->featured_image ?? null);
+            $featured = $this->resolvePublicImageUrl(
+                $itemable->featured_image_url ?? ($itemable->featured_image ?? null)
+            );
 
             if (!$featured && $itemable instanceof Bundles) {
+                $itemable->loadMissing('bundleItems.product.images');
                 $firstProduct = optional($itemable->bundleItems->first())->product;
                 if ($firstProduct) {
-                    $featured = $firstProduct->featured_image_url
-                        ?? ($firstProduct->featured_image ?? null);
+                    $featured = $this->resolvePublicImageUrl(
+                        $firstProduct->featured_image_url ?? ($firstProduct->featured_image ?? null)
+                    );
+                    if (!$featured) {
+                        $firstImage = $firstProduct->images->first();
+                        $featured = $this->resolvePublicImageUrl($firstImage->image ?? null);
+                    }
                 }
+            }
+
+            if (!$featured && $itemable instanceof Product) {
+                $itemable->loadMissing('images');
+                $firstImage = $itemable->images->first();
+                $featured = $this->resolvePublicImageUrl($firstImage->image ?? null);
             }
         }
 
@@ -1018,6 +1057,7 @@ class OrderController extends Controller
                 'title'          => $title,
                 'subtitle'       => $subtitle,
                 'featured_image' => $featured,
+                'featured_image_url' => $featured,
             ] : null,
         ];
 
