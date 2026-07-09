@@ -1361,7 +1361,7 @@ class OrderController extends Controller
                     $inspectionFeeFromBundle = $sumInspection;
                     $materialCost = $sumMaterials;
                 } elseif ($includeInstallationMaterial) {
-                    $installationFee = $sumInstallation;
+                    $installationFee = 0.0;
                     $materialCost = $sumMaterials;
                     $ownGetsInspection = (bool) ($checkoutSettings->own_installer_include_inspection ?? false);
                     $inspectionFeeFromBundle = $ownGetsInspection ? $sumInspection : 0.0;
