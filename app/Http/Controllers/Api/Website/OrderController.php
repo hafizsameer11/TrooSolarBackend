@@ -92,6 +92,26 @@ class OrderController extends Controller
         // Buy Now receipts: trust stored catalog lines + fee columns; do not back-solve
         // net totals from grand_total (avoids inflating product subtotal when fees mismatch).
         if ($isBuyNow && $catalogItemsSubtotal > 0.005) {
+            if ($discount <= 0.005 && $storedTotal > 0) {
+                $vatForInference = $vat > 0.005
+                    ? $vat
+                    : (float) CheckoutPricing::vatAmount(max(0.0, $storedTotal - $fees), $vatPct);
+                $inferredAfter = round($storedTotal - $fees - $vatForInference - $insurance, 2);
+                if ($inferredAfter > 0 && $inferredAfter + 0.005 < $catalogItemsSubtotal) {
+                    $itemsAfter = $inferredAfter;
+                    $discount = max(0.0, round($catalogItemsSubtotal - $itemsAfter, 2));
+                }
+            }
+
+            if ($discount <= 0.005) {
+                $referral = ReferralSettings::getSettings();
+                $pct = (float) ($referral->outright_discount_percentage ?? 0);
+                if ($pct > 0) {
+                    $discount = round($catalogItemsSubtotal * ($pct / 100), 2);
+                    $itemsAfter = max(0.0, round($catalogItemsSubtotal - $discount, 2));
+                }
+            }
+
             $sumBeforeVat = round($itemsAfter + $fees, 2);
             if ($vat <= 0.005 && $sumBeforeVat > 0) {
                 $vat = (float) CheckoutPricing::vatAmount($sumBeforeVat, $vatPct);
@@ -103,6 +123,10 @@ class OrderController extends Controller
             $discountPct = null;
             if ($discount > 0.005 && $catalogItemsSubtotal > 0) {
                 $discountPct = round(100 * ($discount / $catalogItemsSubtotal), 2);
+            }
+            if ($discountPct === null && $discount > 0.005) {
+                $referral = ReferralSettings::getSettings();
+                $discountPct = (float) ($referral->outright_discount_percentage ?? 0);
             }
 
             return [
