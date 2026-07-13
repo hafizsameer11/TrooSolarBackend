@@ -1168,6 +1168,8 @@ class OrderController extends Controller
             return ResponseHelper::error("Unauthorized access to order", 403);
     }
 
+        $wasUnpaid = strtolower((string) ($order->payment_status ?? '')) !== 'paid';
+
     $order->payment_status="paid";
         if (Schema::hasColumn('orders', 'total_price')) {
             $order->total_price = (float) $amount;
@@ -1183,6 +1185,12 @@ class OrderController extends Controller
             (string) $tx_id,
             $type
         );
+
+        // Buy Now creates the order at checkout (pending), then confirms payment here.
+        // Cart shop orders already email on POST /orders — only notify when payment newly succeeds.
+        if ($wasUnpaid) {
+            $this->notifyCustomerOrderPlaced($order->fresh());
+        }
 
         return ResponseHelper::success([
             'order_id' => $order->id,
