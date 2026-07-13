@@ -221,33 +221,6 @@ class OrderController extends Controller
         return in_array(strtolower((string) $user->role), ['admin', 'superadmin', 'super_admin'], true);
     }
 
-    /**
-     * One-line label for transactional emails (first meaningful line item or legacy product/bundle).
-     */
-    private function orderDeliveredSummaryLine(Order $order): string
-    {
-        $order->loadMissing(['items.itemable', 'product', 'bundle']);
-
-        foreach ($order->items as $item) {
-            $itemable = $item->itemable;
-            if ($itemable) {
-                $t = $itemable->title ?? $itemable->name ?? null;
-                if ($t) {
-                    return (string) $t;
-                }
-            }
-        }
-
-        if ($order->product) {
-            return (string) ($order->product->title ?? 'Your product');
-        }
-        if ($order->bundle) {
-            return (string) ($order->bundle->title ?? 'Your bundle');
-        }
-
-        return 'Your Troosolar purchase';
-    }
-
     /** Customer-facing label for order_status values. */
     private function humanizeOrderStatus(?string $status): string
     {
@@ -286,15 +259,14 @@ class OrderController extends Controller
 
         try {
             $order->loadMissing(['user', 'items.itemable', 'deliveryAddress']);
+            $orderView = $this->formatOrder($order->fresh(['user', 'items.itemable', 'deliveryAddress']), []);
 
             if (in_array($new, ['delivered', 'completed', 'complete'], true)) {
-                $summaryLine = $this->orderDeliveredSummaryLine($order);
-                Mail::to($user->email)->send(new OrderDeliveredThankYouMail($order, $user, $summaryLine));
+                Mail::to($user->email)->send(new OrderDeliveredThankYouMail($order, $user, $orderView));
 
                 return;
             }
 
-            $orderView = $this->formatOrder($order->fresh(['user', 'items.itemable', 'deliveryAddress']), []);
             $prevHuman = $this->humanizeOrderStatus($previousStatus);
             $newHuman = $this->humanizeOrderStatus($order->order_status);
             Mail::to($user->email)->send(new OrderStatusUpdatedMail($order, $user, $prevHuman, $newHuman, $orderView));

@@ -13,9 +13,12 @@
         .message { color: #444; margin: 20px 0; }
         .details { background: #fff; border-radius: 8px; padding: 16px 20px; margin: 16px 0; font-size: 14px; border: 1px solid #e2e8f0; }
         .details p { margin: 8px 0; }
+        .item-list { margin: 12px 0 0 0; padding-left: 0; list-style: none; }
+        .item-list li { margin: 6px 0; padding-left: 0; }
         .btn { display: inline-block; background-color: #273e8e; color: #fff !important; text-decoration: none; padding: 14px 28px; border-radius: 8px; font-weight: 600; margin: 16px 0; }
         .btn-secondary { background-color: #fff; color: #273e8e !important; border: 2px solid #273e8e; }
         .footer { margin-top: 28px; padding-top: 20px; border-top: 1px solid #cbd5e1; font-size: 12px; color: #64748b; text-align: center; }
+        .muted { color: #64748b; font-size: 13px; }
     </style>
 </head>
 <body>
@@ -31,13 +34,7 @@
             <p>If you have a moment, we would love to hear from you. Your feedback helps other customers and helps us improve.</p>
         </div>
 
-        <div class="details">
-            <p><strong>Order number:</strong> {{ $order->order_number ?? ('#' . $order->id) }}</p>
-            <p><strong>Item:</strong> {{ $orderSummaryLine }}</p>
-            @if(!empty($order->total_price))
-                <p><strong>Order total:</strong> ₦{{ number_format((float) $order->total_price, 2) }}</p>
-            @endif
-        </div>
+        @include('emails.partials.order_email_simple_order_box', ['order' => $order, 'orderView' => $orderView])
 
         <p>
             <a href="{{ $dashboardOrdersUrl }}" class="btn" target="_blank" rel="noopener noreferrer">Open My orders &amp; leave a review</a>

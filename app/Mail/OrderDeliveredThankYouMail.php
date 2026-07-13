@@ -18,18 +18,26 @@ class OrderDeliveredThankYouMail extends Mailable
 
     public User $user;
 
-    /** Short description of what was ordered (one line for the email body). */
-    public string $orderSummaryLine;
+    /**
+     * Formatted order payload from OrderController::formatOrder() (all line items + totals).
+     *
+     * @var array<string, mixed>
+     */
+    public array $orderView;
 
     /** Link to dashboard → More → My orders (leave a review). */
     public string $dashboardOrdersUrl;
 
-    public function __construct(Order $order, User $user, string $orderSummaryLine)
+    /**
+     * @param  array<string, mixed>  $orderView
+     */
+    public function __construct(Order $order, User $user, array $orderView)
     {
         $this->order = $order;
         $this->user = $user;
-        $this->orderSummaryLine = $orderSummaryLine;
-        $this->dashboardOrdersUrl = rtrim((string) config('app.frontend_url', 'https://app.troosolar.io'), '/').'/more?section=myOrders&orderId='.$order->id;
+        $this->orderView = $orderView;
+        $this->dashboardOrdersUrl = rtrim((string) config('app.frontend_url', 'https://app.troosolar.io'), '/')
+            .'/more?section=myOrders&orderId='.$order->id;
     }
 
     public function envelope(): Envelope
