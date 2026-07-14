@@ -441,9 +441,7 @@
         </div>
         @endif
 
-        <p style="margin-top:8px;font-size:14px;">
-            Thank you again for choosing Troosolar. If you need support, use the Support Section in your account.
-        </p>
+        <p style="margin-top:8px;font-size:14px;">Thank you,<br><strong>Troosolar Team</strong></p>
     </div>
 </div>
 </body>
