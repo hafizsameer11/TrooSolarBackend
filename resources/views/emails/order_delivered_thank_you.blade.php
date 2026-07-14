@@ -44,13 +44,7 @@
             <a href="{{ $dashboardOrdersUrl }}" style="word-break: break-all; color: #273e8e;">{{ $dashboardOrdersUrl }}</a>
         </p>
 
-        <p class="message" style="font-size: 14px;">
-            Thank you again for choosing Troosolar. If you need support, reply to this email or use the Help section in your account.
-        </p>
-
-        <div class="footer">
-            <p>This message was sent because your order status was updated to delivered. Please do not reply if this email was unexpected — contact support instead.</p>
-        </div>
+        @include('emails.partials.support_closing')
     </div>
 </body>
 </html>

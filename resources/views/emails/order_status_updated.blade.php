@@ -47,13 +47,7 @@
             <a href="{{ $orderDetailUrl }}" style="word-break: break-all; color: #273e8e;">{{ $orderDetailUrl }}</a>
         </p>
 
-        <p class="message" style="font-size: 14px;">
-            If you have questions, reply to this email or use the Help section in your account.
-        </p>
-
-        <div class="footer">
-            <p>This message was sent because your order status was updated. If this was unexpected, please contact support.</p>
-        </div>
+        @include('emails.partials.support_closing')
     </div>
 </body>
 </html>

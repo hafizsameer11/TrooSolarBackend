@@ -57,9 +57,7 @@
             </p>
         @endif
 
-        <div class="footer">
-            <p>This is an automated message from Troosolar about your {{ \App\Support\MailBrand::BNPL_LABEL }} application. Please do not reply to this email.</p>
-        </div>
+        @include('emails.partials.support_closing')
     </div>
 </body>
 </html>

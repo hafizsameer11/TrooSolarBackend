@@ -40,10 +40,8 @@
         <p style="color: #999; font-size: 12px;">
             This code will expire in 10 minutes. Please do not share this code with anyone.
         </p>
-        
-        <div class="footer">
-            <p>This is an automated message from Troosolar. Please do not reply to this email.</p>
-        </div>
+
+        @include('emails.partials.support_closing')
     </div>
 </body>
 </html>

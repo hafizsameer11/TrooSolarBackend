@@ -79,7 +79,7 @@
                         @endif
 
                         <p style="margin:0;font-size:14px;line-height:1.6;color:#6b7280;">
-                            If you have any questions, please reply to this email and our team will assist you.
+                            Thank you again for choosing Troosolar. If you need support, use the Support Section in your account.
                         </p>
                     </td>
                 </tr>

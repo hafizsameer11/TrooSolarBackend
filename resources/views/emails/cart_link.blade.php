@@ -124,13 +124,7 @@
             </p>
         @endif
 
-        <p class="message" style="font-size: 14px;">
-            If you have questions, reply to this email or use the Help section in your account.
-        </p>
-
-        <div class="footer">
-            <p>This message was sent because a Troosolar administrator prepared an order for your account.</p>
-        </div>
+        @include('emails.partials.support_closing')
     </div>
 </body>
 </html>

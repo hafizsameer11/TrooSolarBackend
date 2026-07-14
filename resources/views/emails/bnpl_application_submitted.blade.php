@@ -34,7 +34,7 @@
         </p>
         <p style="font-size: 13px; color: #64748b; word-break: break-all;">{{ $applicationUrl }}</p>
 
-        <p>Thank you,<br><strong>Troosolar Team</strong></p>
+        @include('emails.partials.support_closing')
     </div>
 </body>
 </html>
