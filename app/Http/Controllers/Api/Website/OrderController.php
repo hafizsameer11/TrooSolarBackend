@@ -120,6 +120,7 @@ class OrderController extends Controller
     {
         $settings = CheckoutSetting::get();
         $vatPct = (float) ($settings->vat_percentage ?? config('checkout.vat_percentage', 7.5));
+        $insPct = (float) ($settings->insurance_fee_percentage ?? config('checkout.insurance_fee_percentage', 3));
         $referral = ReferralSettings::getSettings();
         $configuredDiscountPct = max(0.0, (float) ($referral->outright_discount_percentage ?? 0));
 
@@ -210,6 +211,7 @@ class OrderController extends Controller
                 'sum_before_vat' => $sumBeforeVat,
                 'vat_amount' => round($vat, 2),
                 'vat_percentage' => $vatPct,
+                'insurance_fee_percentage' => $insPct,
                 'grand_total' => round($grandTotal, 2),
             ];
         }
@@ -277,6 +279,7 @@ class OrderController extends Controller
             'sum_before_vat' => $sumBeforeVat,
             'vat_amount' => round($vat, 2),
             'vat_percentage' => $vatPct,
+            'insurance_fee_percentage' => $insPct,
             'grand_total' => round($grandTotal, 2),
         ];
     }
@@ -3674,6 +3677,7 @@ class OrderController extends Controller
                     'delivery_fee' => $paymentBreakdown['delivery_fee'],
                     'inspection_fee' => $paymentBreakdown['inspection_fee'],
                     'insurance_fee' => $paymentBreakdown['insurance_fee'],
+                    'insurance_fee_percentage' => $paymentBreakdown['insurance_fee_percentage'] ?? null,
                     'items_subtotal_before_discount' => $paymentBreakdown['catalog_items_subtotal'],
                     'outright_discount_amount' => $outrightDiscountAmount > 0.005 ? $outrightDiscountAmount : null,
                     'outright_discount_percentage' => $paymentBreakdown['outright_discount_percentage'],
