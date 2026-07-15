@@ -954,6 +954,13 @@ class OrderController extends Controller
             'estimated_delivery_from' => optional($order->estimated_delivery_from)->format('Y-m-d'),
             'estimated_delivery_to' => optional($order->estimated_delivery_to)->format('Y-m-d'),
             'delivery_estimate_label' => $order->delivery_estimate_label,
+            'customer_type' => Schema::hasColumn('orders', 'customer_type') ? ($order->customer_type ?? null) : null,
+            'installer_choice' => Schema::hasColumn('orders', 'installer_choice') ? ($order->installer_choice ?? null) : null,
+            'property_floors' => Schema::hasColumn('orders', 'property_floors') ? $order->property_floors : null,
+            'property_rooms' => Schema::hasColumn('orders', 'property_rooms') ? $order->property_rooms : null,
+            'is_gated_estate' => Schema::hasColumn('orders', 'is_gated_estate') ? $order->is_gated_estate : null,
+            'estate_name' => Schema::hasColumn('orders', 'estate_name') ? ($order->estate_name ?? null) : null,
+            'estate_address' => Schema::hasColumn('orders', 'estate_address') ? ($order->estate_address ?? null) : null,
         ];
 
         if (Schema::hasColumn('orders', 'installation_requested_date')) {
@@ -1287,6 +1294,9 @@ class OrderController extends Controller
                 'property_address' => 'nullable|string',
                 'property_floors' => 'nullable|integer',
                 'property_rooms' => 'nullable|integer',
+                'is_gated_estate' => 'nullable|boolean',
+                'estate_name' => 'nullable|string|max:255',
+                'estate_address' => 'nullable|string',
                 'contact_name' => 'nullable|string|max:255',
                 'contact_phone' => 'nullable|string|max:50',
             ];
@@ -1629,6 +1639,19 @@ class OrderController extends Controller
                 'inspection_fee' => $inspectionFee,
                 'insurance_fee' => $insuranceFee,
                 'vat_amount' => $vatAmount,
+                'customer_type' => $data['customer_type'] ?? null,
+                'installer_choice' => $installerChoice,
+                'property_floors' => isset($data['property_floors']) ? (int) $data['property_floors'] : null,
+                'property_rooms' => isset($data['property_rooms']) ? (int) $data['property_rooms'] : null,
+                'is_gated_estate' => array_key_exists('is_gated_estate', $data)
+                    ? filter_var($data['is_gated_estate'], FILTER_VALIDATE_BOOLEAN)
+                    : null,
+                'estate_name' => (isset($data['estate_name']) && trim((string) $data['estate_name']) !== '')
+                    ? trim((string) $data['estate_name'])
+                    : null,
+                'estate_address' => (isset($data['estate_address']) && trim((string) $data['estate_address']) !== '')
+                    ? trim((string) $data['estate_address'])
+                    : null,
             ];
 
             foreach ($columnsToCheck as $column => $value) {
@@ -3444,6 +3467,13 @@ class OrderController extends Controller
                 'bundle_title' => $resolvedBundle?->title ?? $order->bundle?->title,
                 'product_title' => $resolvedProduct?->title ?? $order->product?->title,
                 'product_category' => $order->loanApplication?->product_category,
+                'customer_type' => Schema::hasColumn('orders', 'customer_type') ? ($order->customer_type ?? null) : null,
+                'installer_choice' => Schema::hasColumn('orders', 'installer_choice') ? ($order->installer_choice ?? null) : null,
+                'property_floors' => Schema::hasColumn('orders', 'property_floors') ? $order->property_floors : null,
+                'property_rooms' => Schema::hasColumn('orders', 'property_rooms') ? $order->property_rooms : null,
+                'is_gated_estate' => Schema::hasColumn('orders', 'is_gated_estate') ? $order->is_gated_estate : null,
+                'estate_name' => Schema::hasColumn('orders', 'estate_name') ? ($order->estate_name ?? null) : null,
+                'estate_address' => Schema::hasColumn('orders', 'estate_address') ? ($order->estate_address ?? null) : null,
                 'delivery_address' => $this->formatDeliveryAddressForApi($order->deliveryAddress, $order->user),
                 'installation_requested_date' => $installationRequested,
             ], 'Order summary retrieved successfully');
