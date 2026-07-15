@@ -2288,7 +2288,7 @@ class OrderController extends Controller
      * @param  \Illuminate\Support\Collection<int, OrderItem>|\Illuminate\Database\Eloquent\Collection<int, OrderItem>  $orderItems
      * @return array<int, array{name: string, description: string, quantity: int, price: float, type?: string}>
      */
-    private function buildOrderSummaryItemsFromOrderItems($orderItems, string $checkoutFlow = 'buy_now'): array
+    private function buildOrderSummaryItemsFromOrderItems($orderItems, string $checkoutFlow = 'buy_now', ?string $installerChoice = null): array
     {
         $items = [];
 
@@ -2300,7 +2300,7 @@ class OrderController extends Controller
 
             if ($itemable instanceof Bundles) {
                 $itemable->loadMissing(['bundleItems.product.category', 'customServices', 'bundleMaterials.material']);
-                $bundleOrderListItems = $this->buildOrderSummaryItemsFromBundleOrderList($itemable, null, $checkoutFlow);
+                $bundleOrderListItems = $this->buildOrderSummaryItemsFromBundleOrderList($itemable, $installerChoice, $checkoutFlow);
                 if (count($bundleOrderListItems) > 0) {
                     $orderQty = max(1, (int) ($orderItem->quantity ?? 1));
                     if ($orderQty > 1) {
@@ -2574,6 +2574,63 @@ class OrderController extends Controller
         }
 
         return true;
+    }
+
+    /**
+     * Resolve installer for order-list / invoice visibility (matches Buy Now checkout filtering).
+     */
+    private function resolveOrderInstallerChoice(?Order $order): ?string
+    {
+        if (! $order) {
+            return null;
+        }
+
+        if (Schema::hasColumn('orders', 'installer_choice')) {
+            $raw = strtolower(trim((string) ($order->installer_choice ?? '')));
+            if ($raw === 'own' || $raw === 'troosolar') {
+                return $raw;
+            }
+        }
+
+        // Legacy Buy Now rows before installer_choice was persisted.
+        if (strtolower((string) ($order->order_type ?? '')) === 'buy_now') {
+            $install = (float) ($order->installation_price ?? 0);
+            $inspect = Schema::hasColumn('orders', 'inspection_fee')
+                ? (float) ($order->inspection_fee ?? 0)
+                : 0.0;
+            if ($install <= 0.005 && $inspect <= 0.005) {
+                return 'own';
+            }
+
+            return 'troosolar';
+        }
+
+        return null;
+    }
+
+    /**
+     * Hide Installation Material Cost order-list rows when materials were not charged
+     * (own installer without materials opt-in), even if visibility was stored as "both".
+     *
+     * @param  array<int, array<string, mixed>>  $lines
+     * @return array<int, array<string, mixed>>
+     */
+    private function filterBundleOrderListLinesForOrder(array $lines, ?Order $order, ?string $installerChoice): array
+    {
+        $materialCost = ($order && Schema::hasColumn('orders', 'material_cost'))
+            ? (float) ($order->material_cost ?? 0)
+            : 0.0;
+        $hideMaterialLine = $installerChoice === 'own' && $materialCost <= 0.005;
+
+        if (! $hideMaterialLine) {
+            return $lines;
+        }
+
+        return array_values(array_filter($lines, static function (array $line) {
+            $desc = strtolower(trim((string) ($line['description'] ?? $line['name'] ?? '')));
+
+            return ! (str_contains($desc, 'installation material') || $desc === 'material cost');
+        }));
     }
 
     private function resolveBundleCheckoutFlow(?Order $order = null, ?string $explicit = null): string
@@ -2858,8 +2915,10 @@ class OrderController extends Controller
     private function buildInvoiceProductLineItemsFromOrder(Order $order, ?Bundles $bundle): array
     {
         $checkoutFlow = $this->resolveBundleCheckoutFlow($order);
+        $installerChoice = $this->resolveOrderInstallerChoice($order);
         if ($bundle) {
-            $lines = $this->buildBundleOrderListLineItems($bundle, null, $checkoutFlow);
+            $lines = $this->buildBundleOrderListLineItems($bundle, $installerChoice, $checkoutFlow);
+            $lines = $this->filterBundleOrderListLinesForOrder($lines, $order, $installerChoice);
             if (count($lines) > 0) {
                 return $lines;
             }
@@ -2884,7 +2943,7 @@ class OrderController extends Controller
             ];
         }
 
-        return $rows;
+        return $this->filterBundleOrderListLinesForOrder($rows, $order, $installerChoice);
     }
 
     /**
@@ -3338,7 +3397,13 @@ class OrderController extends Controller
             $backupTime = null;
 
             $order->loadMissing(['items.itemable']);
-            $persistedItems = $this->buildOrderSummaryItemsFromOrderItems($order->items, $this->resolveBundleCheckoutFlow($order));
+            $installerChoice = $this->resolveOrderInstallerChoice($order);
+            $persistedItems = $this->buildOrderSummaryItemsFromOrderItems(
+                $order->items,
+                $this->resolveBundleCheckoutFlow($order),
+                $installerChoice
+            );
+            $persistedItems = $this->filterBundleOrderListLinesForOrder($persistedItems, $order, $installerChoice);
 
             try {
                 if (count($persistedItems) > 0) {
@@ -3355,7 +3420,12 @@ class OrderController extends Controller
                 } elseif ($resolvedBundle) {
                     $bundle = $resolvedBundle;
                     $bundle->loadMissing(['bundleItems.product.category', 'customServices', 'bundleMaterials.material']);
-                    $items = $this->buildOrderSummaryItemsFromBundleOrderList($bundle, null, $this->resolveBundleCheckoutFlow($order));
+                    $items = $this->buildOrderSummaryItemsFromBundleOrderList(
+                        $bundle,
+                        $installerChoice,
+                        $this->resolveBundleCheckoutFlow($order)
+                    );
+                    $items = $this->filterBundleOrderListLinesForOrder($items, $order, $installerChoice);
 
                     if (count($items) === 0) {
                         $bundleItems = $bundle->bundleItems()->with('product.category')->get();
@@ -3696,6 +3766,8 @@ class OrderController extends Controller
                 'product_title' => $product?->title ?? $order->product?->title,
                 'delivery_address' => $this->formatDeliveryAddressForApi($order->deliveryAddress, $order->user),
                 'installation_requested_date' => $installationRequested,
+                'customer_type' => Schema::hasColumn('orders', 'customer_type') ? ($order->customer_type ?? null) : null,
+                'installer_choice' => $this->resolveOrderInstallerChoice($order),
                 'invoice' => [
                     'solar_inverter' => $productBreakdown['solar_inverter'],
                     'solar_panels' => $productBreakdown['solar_panels'],
@@ -3717,6 +3789,7 @@ class OrderController extends Controller
                     'vat_percentage' => $paymentBreakdown['vat_percentage'],
                     'grand_total' => $paymentBreakdown['grand_total'],
                     'total' => $paymentBreakdown['grand_total'],
+                    'installer_choice' => $this->resolveOrderInstallerChoice($order),
                 ],
             ], 'Invoice details retrieved successfully');
 
