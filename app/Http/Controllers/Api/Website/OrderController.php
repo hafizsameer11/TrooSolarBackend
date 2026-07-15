@@ -2592,8 +2592,16 @@ class OrderController extends Controller
             }
         }
 
-        // Legacy Buy Now rows before installer_choice was persisted.
-        if (strtolower((string) ($order->order_type ?? '')) === 'buy_now') {
+        $orderType = strtolower(trim((string) ($order->order_type ?? '')));
+        $isBuyNowLike = $orderType === 'buy_now'
+            || (
+                $orderType === ''
+                && strtolower(trim((string) ($order->payment_method ?? ''))) === 'direct'
+                && empty($order->mono_calculation_id)
+            );
+
+        // Legacy Buy Now rows before installer_choice was persisted / order_type missing.
+        if ($isBuyNowLike) {
             $install = (float) ($order->installation_price ?? 0);
             $inspect = Schema::hasColumn('orders', 'inspection_fee')
                 ? (float) ($order->inspection_fee ?? 0)
@@ -2609,8 +2617,8 @@ class OrderController extends Controller
     }
 
     /**
-     * Hide Installation Material Cost order-list rows when materials were not charged
-     * (own installer without materials opt-in), even if visibility was stored as "both".
+     * Hide Installation Material Cost order-list rows when they should not appear for this order
+     * (own installer, or materials were not charged).
      *
      * @param  array<int, array<string, mixed>>  $lines
      * @return array<int, array<string, mixed>>
@@ -2620,16 +2628,28 @@ class OrderController extends Controller
         $materialCost = ($order && Schema::hasColumn('orders', 'material_cost'))
             ? (float) ($order->material_cost ?? 0)
             : 0.0;
-        $hideMaterialLine = $installerChoice === 'own' && $materialCost <= 0.005;
 
-        if (! $hideMaterialLine) {
-            return $lines;
-        }
-
-        return array_values(array_filter($lines, static function (array $line) {
+        return array_values(array_filter($lines, static function (array $line) use ($installerChoice, $materialCost) {
             $desc = strtolower(trim((string) ($line['description'] ?? $line['name'] ?? '')));
+            $isMaterialLine = str_contains($desc, 'installation material')
+                || $desc === 'material cost'
+                || $desc === 'installation materials cost';
 
-            return ! (str_contains($desc, 'installation material') || $desc === 'material cost');
+            if (! $isMaterialLine) {
+                return true;
+            }
+
+            // Own installer never sees Troosolar-only material order-list rows.
+            if ($installerChoice === 'own') {
+                return false;
+            }
+
+            // Materials not charged on the order — do not list a ₦0 material cost row.
+            if ($materialCost <= 0.005) {
+                return false;
+            }
+
+            return true;
         }));
     }
 
