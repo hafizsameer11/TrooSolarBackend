@@ -63,6 +63,55 @@ class OrderController extends Controller
     }
 
     /**
+     * Catalog items subtotal for Buy Now / invoice (before outright discount).
+     * Never use grand total / total_price — that inflates discount %.
+     */
+    private function resolveBuyNowCatalogItemsSubtotal(
+        Order $order,
+        ?Bundles $bundle,
+        ?Product $product,
+        float $productLinesCatalogSum = 0.0,
+    ): float {
+        $referral = ReferralSettings::getSettings();
+        $pct = max(0.0, (float) ($referral->outright_discount_percentage ?? 0));
+        $storedAfter = Schema::hasColumn('orders', 'product_price') && $order->product_price !== null
+            ? (float) $order->product_price
+            : null;
+
+        // 1) Bundle list / selling price (same source as checkout amount for choose-system).
+        if ($bundle) {
+            $bundleCatalog = $this->resolveCatalogUnitPrice($bundle);
+            if ($bundleCatalog > 0.005) {
+                return round($bundleCatalog, 2);
+            }
+        }
+
+        // 2) Standalone product catalog price.
+        if ($product) {
+            $productCatalog = $this->resolveCatalogUnitPrice($product);
+            if ($productCatalog > 0.005) {
+                return round($productCatalog, 2);
+            }
+        }
+
+        // 3) Sum of real product order lines (multi-product Buy Now).
+        if ($productLinesCatalogSum > 0.005) {
+            return round($productLinesCatalogSum, 2);
+        }
+
+        // 4) Back-calculate from stored after-discount price + configured outright %.
+        if ($storedAfter !== null && $storedAfter > 0.005 && $pct > 0 && $pct < 100) {
+            return round($storedAfter / (1 - ($pct / 100)), 2);
+        }
+
+        if ($storedAfter !== null && $storedAfter > 0.005) {
+            return round($storedAfter, 2);
+        }
+
+        return 0.0;
+    }
+
+    /**
      * Resolve catalog subtotal, discount, fees, VAT, and grand total for order receipts / admin invoice.
      *
      * @return array<string, float|null>
@@ -71,13 +120,17 @@ class OrderController extends Controller
     {
         $settings = CheckoutSetting::get();
         $vatPct = (float) ($settings->vat_percentage ?? config('checkout.vat_percentage', 7.5));
+        $referral = ReferralSettings::getSettings();
+        $configuredDiscountPct = max(0.0, (float) ($referral->outright_discount_percentage ?? 0));
 
         $delivery = (float) ($order->delivery_fee ?? 0);
         $installation = (float) ($order->installation_price ?? 0);
         $insurance = (float) ($order->insurance_fee ?? 0);
         $material = Schema::hasColumn('orders', 'material_cost') ? (float) ($order->material_cost ?? 0) : 0.0;
         $inspection = Schema::hasColumn('orders', 'inspection_fee') ? (float) ($order->inspection_fee ?? 0) : 0.0;
-        $fees = round($delivery + $installation + $insurance + $material + $inspection, 2);
+        // Match Buy Now checkout: insurance is added after VAT, not inside the VAT base.
+        $serviceFees = round($delivery + $installation + $material + $inspection, 2);
+        $fees = round($serviceFees + $insurance, 2);
 
         $itemsAfter = $catalogItemsSubtotal;
         if (Schema::hasColumn('orders', 'product_price') && $order->product_price !== null) {
@@ -89,44 +142,58 @@ class OrderController extends Controller
         $discount = max(0.0, round($catalogItemsSubtotal - $itemsAfter, 2));
         $isBuyNow = strtolower((string) ($order->order_type ?? '')) === 'buy_now';
 
-        // Buy Now receipts: trust stored catalog lines + fee columns; do not back-solve
-        // net totals from grand_total (avoids inflating product subtotal when fees mismatch).
+        // Buy Now receipts: mirror checkout Payment summary.
         if ($isBuyNow && $catalogItemsSubtotal > 0.005) {
-            if ($discount <= 0.005 && $storedTotal > 0) {
-                $vatForInference = $vat > 0.005
-                    ? $vat
-                    : (float) CheckoutPricing::vatAmount(max(0.0, $storedTotal - $fees), $vatPct);
-                $inferredAfter = round($storedTotal - $fees - $vatForInference - $insurance, 2);
-                if ($inferredAfter > 0 && $inferredAfter + 0.005 < $catalogItemsSubtotal) {
-                    $itemsAfter = $inferredAfter;
+            // Prefer configured outright % (usually 10%) when it matches stored product_price.
+            if ($configuredDiscountPct > 0 && $configuredDiscountPct < 100) {
+                $expectedAfter = round($catalogItemsSubtotal * (1 - ($configuredDiscountPct / 100)), 2);
+                $expectedDiscount = round($catalogItemsSubtotal - $expectedAfter, 2);
+                if (
+                    $itemsAfter <= 0.005
+                    || abs($itemsAfter - $expectedAfter) < max(1.0, $catalogItemsSubtotal * 0.01)
+                    || $discount <= 0.005
+                ) {
+                    $itemsAfter = Schema::hasColumn('orders', 'product_price') && $order->product_price !== null
+                        ? (float) $order->product_price
+                        : $expectedAfter;
+                    // If stored after-discount is within 1% of expected, use expected 10% labels.
+                    if (abs($itemsAfter - $expectedAfter) < max(1.0, $catalogItemsSubtotal * 0.01)) {
+                        $itemsAfter = $expectedAfter;
+                        $discount = $expectedDiscount;
+                    } else {
+                        $discount = max(0.0, round($catalogItemsSubtotal - $itemsAfter, 2));
+                    }
+                } else {
                     $discount = max(0.0, round($catalogItemsSubtotal - $itemsAfter, 2));
                 }
             }
 
-            if ($discount <= 0.005) {
-                $referral = ReferralSettings::getSettings();
-                $pct = (float) ($referral->outright_discount_percentage ?? 0);
-                if ($pct > 0) {
-                    $discount = round($catalogItemsSubtotal * ($pct / 100), 2);
-                    $itemsAfter = max(0.0, round($catalogItemsSubtotal - $discount, 2));
-                }
+            if ($discount <= 0.005 && $configuredDiscountPct > 0) {
+                $discount = round($catalogItemsSubtotal * ($configuredDiscountPct / 100), 2);
+                $itemsAfter = max(0.0, round($catalogItemsSubtotal - $discount, 2));
             }
 
-            $sumBeforeVat = round($itemsAfter + $fees, 2);
+            $sumBeforeVat = round($itemsAfter + $serviceFees, 2);
             if ($vat <= 0.005 && $sumBeforeVat > 0) {
                 $vat = (float) CheckoutPricing::vatAmount($sumBeforeVat, $vatPct);
             }
             $grandTotal = $storedTotal > 0
                 ? $storedTotal
-                : round($sumBeforeVat + $vat, 2);
+                : round($sumBeforeVat + $vat + $insurance, 2);
 
             $discountPct = null;
             if ($discount > 0.005 && $catalogItemsSubtotal > 0) {
                 $discountPct = round(100 * ($discount / $catalogItemsSubtotal), 2);
-            }
-            if ($discountPct === null && $discount > 0.005) {
-                $referral = ReferralSettings::getSettings();
-                $discountPct = (float) ($referral->outright_discount_percentage ?? 0);
+                // Snap to configured Buy Now outright % when within 0.5 points (avoids 19% UI noise).
+                if ($configuredDiscountPct > 0 && abs($discountPct - $configuredDiscountPct) <= 0.5) {
+                    $discountPct = round($configuredDiscountPct, 2);
+                    $discount = round($catalogItemsSubtotal * ($configuredDiscountPct / 100), 2);
+                    $itemsAfter = max(0.0, round($catalogItemsSubtotal - $discount, 2));
+                    $sumBeforeVat = round($itemsAfter + $serviceFees, 2);
+                    if ((float) ($order->vat_amount ?? 0) <= 0.005) {
+                        $vat = (float) CheckoutPricing::vatAmount($sumBeforeVat, $vatPct);
+                    }
+                }
             }
 
             return [
@@ -146,6 +213,8 @@ class OrderController extends Controller
                 'grand_total' => round($grandTotal, 2),
             ];
         }
+
+        $fees = round($delivery + $installation + $insurance + $material + $inspection, 2);
 
         if ($storedTotal > 0) {
             $postFees = round($storedTotal - $fees, 2);
@@ -3483,7 +3552,7 @@ class OrderController extends Controller
             $order->loadMissing(['items.itemable']);
             $productOrderItems = $order->items->filter(fn ($row) => $row->itemable instanceof Product)->values();
 
-            $catalogItemsSubtotal = 0.0;
+            $productLinesCatalogSum = 0.0;
             $productLineItems = [];
             if ($productOrderItems->count() > 0) {
                 foreach ($productOrderItems as $orderItem) {
@@ -3492,7 +3561,7 @@ class OrderController extends Controller
                         ? $this->resolveCatalogUnitPrice($orderItem->itemable)
                         : (float) ($orderItem->unit_price ?? 0);
                     $lineTotal = round($catalogUnit * $qty, 2);
-                    $catalogItemsSubtotal += $lineTotal;
+                    $productLinesCatalogSum += $lineTotal;
                     $productLineItems[] = [
                         'product_id' => $orderItem->itemable_id,
                         'description' => (string) ($orderItem->itemable->title ?? 'Product'),
@@ -3502,17 +3571,18 @@ class OrderController extends Controller
                         'total_cost' => $lineTotal,
                     ];
                 }
-                $catalogItemsSubtotal = round($catalogItemsSubtotal, 2);
-            } elseif (Schema::hasColumn('orders', 'product_price') && $order->product_price) {
-                $catalogItemsSubtotal = (float) $order->product_price;
-            } else {
-                $catalogItemsSubtotal = (float) ($order->total_price ?? 0);
+                $productLinesCatalogSum = round($productLinesCatalogSum, 2);
             }
 
-            $itemsSubtotalAfterDiscount = Schema::hasColumn('orders', 'product_price') && $order->product_price !== null
-                ? (float) $order->product_price
-                : $catalogItemsSubtotal;
-            $outrightDiscountAmount = max(0.0, round($catalogItemsSubtotal - $itemsSubtotalAfterDiscount, 2));
+            // Bundles: catalog = bundle selling price (not material line sum, not grand total).
+            // Products: sum of catalog product lines. Never use order.total_price as subtotal.
+            $catalogItemsSubtotal = $this->resolveBuyNowCatalogItemsSubtotal(
+                $order,
+                $bundle,
+                $product,
+                // Only use product-line sum when this is not a bundle order.
+                $bundle ? 0.0 : $productLinesCatalogSum
+            );
 
             $paymentBreakdown = $this->resolveOrderPaymentBreakdown($order, $catalogItemsSubtotal);
             $itemsSubtotalAfterDiscount = (float) $paymentBreakdown['items_subtotal_after_discount'];
@@ -3531,7 +3601,10 @@ class OrderController extends Controller
 
             $bundleLineItems = [];
             $invoiceCheckoutFlow = $this->resolveBundleCheckoutFlow($order);
-            if ($productOrderItems->count() > 1) {
+            $breakdownBase = $catalogItemsSubtotal > 0.005
+                ? $catalogItemsSubtotal
+                : (float) ($order->product_price ?? 0);
+            if ($productOrderItems->count() > 1 && ! $invoiceBundle) {
                 $multiLines = [];
                 foreach ($productOrderItems as $orderItem) {
                     $qty = max(1, (int) ($orderItem->quantity ?? 1));
@@ -3545,14 +3618,14 @@ class OrderController extends Controller
                         'line_total' => round($catalogUnit * $qty, 2),
                     ];
                 }
-                $productBreakdown = $this->calculateMultiProductBreakdown($multiLines, $catalogItemsSubtotal, $bundleLineItems);
-            } elseif ($productOrderItems->count() === 1) {
+                $productBreakdown = $this->calculateMultiProductBreakdown($multiLines, $breakdownBase, $bundleLineItems);
+            } elseif ($productOrderItems->count() === 1 && ! $invoiceBundle) {
                 $only = $productOrderItems->first();
                 $product = $only->itemable;
                 $productBreakdown = $this->calculateProductBreakdown(
                     $product,
                     null,
-                    $catalogItemsSubtotal,
+                    $breakdownBase,
                     $bundleLineItems,
                     $invoiceCheckoutFlow
                 );
@@ -3560,7 +3633,7 @@ class OrderController extends Controller
                 $productBreakdown = $this->calculateProductBreakdown(
                     $product,
                     $invoiceBundle,
-                    $catalogItemsSubtotal,
+                    $breakdownBase,
                     $bundleLineItems,
                     $invoiceCheckoutFlow
                 );
