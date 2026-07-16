@@ -359,6 +359,9 @@ class AuditController extends Controller
                         'property_rooms' => $request->property_rooms,
                         'contact_name' => $request->contact_name,
                         'contact_phone' => $request->contact_phone,
+                        'is_gated_estate' => $request->is_gated_estate,
+                        'estate_name' => $request->estate_name,
+                        'estate_address' => $request->estate_address,
                         'order_id' => $request->order_id,
                         'order_number' => $request->order?->order_number,
                         'preferred_audit_date' => Schema::hasColumn('audit_requests', 'preferred_audit_date')
