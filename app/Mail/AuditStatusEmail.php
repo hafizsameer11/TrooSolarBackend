@@ -37,7 +37,7 @@ class AuditStatusEmail extends Mailable
         if ($status === 'approved') {
             $this->subjectLine = 'Your audit request has been approved - Troosolar';
             $this->headingText = MailBrand::heading('Your audit request has been approved');
-            $this->bodyText = 'Your '.$this->auditTypeLabel.' audit request has been approved. Professional audits are paid services — please complete payment using the instructions below so we can confirm your booking and schedule your visit.';
+            $this->bodyText = 'Your '.$this->auditTypeLabel.' audit request has been approved. Professional audits are paid services — please complete payment using the instructions below, then reply to this email with your payment receipt for confirmation.';
         } elseif ($status === 'rejected') {
             $this->subjectLine = 'Update on your audit request - Troosolar';
             $this->headingText = MailBrand::heading('Your audit request was not approved');

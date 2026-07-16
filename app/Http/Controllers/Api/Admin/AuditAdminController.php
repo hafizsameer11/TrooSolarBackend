@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Helpers\ResponseHelper;
+use App\Mail\AuditPaymentConfirmedEmail;
 use App\Mail\AuditStatusEmail;
 use App\Models\AuditRequest;
 use App\Models\CartItem;
@@ -514,7 +515,7 @@ class AuditAdminController extends Controller
                 ],
             ]);
 
-            $auditRequest = AuditRequest::findOrFail($id);
+            $auditRequest = AuditRequest::with('user')->findOrFail($id);
             $previousStatus = $auditRequest->status;
 
             $auditRequest->status = $data['status'];
@@ -648,6 +649,18 @@ class AuditAdminController extends Controller
                 $auditRequest->customer_has_paid = true;
             }
             $auditRequest->save();
+
+            $user = $auditRequest->user;
+            if ($user && ! empty($user->email)) {
+                try {
+                    Mail::to($user->email)->send(new AuditPaymentConfirmedEmail($user, $auditRequest));
+                } catch (\Throwable $e) {
+                    Log::warning('Audit payment confirmation email failed: ' . $e->getMessage(), [
+                        'audit_request_id' => $auditRequest->id,
+                        'user_id' => $user->id,
+                    ]);
+                }
+            }
 
             return ResponseHelper::success([
                 'id' => $auditRequest->id,

@@ -43,7 +43,7 @@
                                 <div style="margin:18px 0;padding:16px;border:2px solid #273e8e;border-radius:8px;background:#f5f7ff;">
                                     <p style="margin:0 0 12px;font-size:16px;font-weight:bold;color:#273e8e;">Audit visit details and payment instructions</p>
                                     <p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#374151;">
-                                        Your audit request has been approved. The details below show when our team will come for the audit and how to make payment before the visit. After payment, reply to this email with your proof of payment so we can confirm your slot.
+                                        Your audit request has been approved. The details below show when our team will come for the audit and how to make payment before the visit. After payment, kindly reply to this email with your payment receipt for confirmation.
                                     </p>
                                     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="font-size:14px;line-height:1.6;">
                                         @if($paymentDate)
