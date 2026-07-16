@@ -41,20 +41,20 @@
                             @endphp
                             @if($paymentDate || $paymentTime || $paymentAmount || $paymentAccount)
                                 <div style="margin:18px 0;padding:16px;border:2px solid #273e8e;border-radius:8px;background:#f5f7ff;">
-                                    <p style="margin:0 0 12px;font-size:16px;font-weight:bold;color:#273e8e;">Audit payment instructions</p>
+                                    <p style="margin:0 0 12px;font-size:16px;font-weight:bold;color:#273e8e;">Audit visit details and payment instructions</p>
                                     <p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#374151;">
-                                        Please pay the audit fee using the details below. After payment, reply to this email with your proof of payment so we can confirm your slot.
+                                        Your audit request has been approved. The details below show when our team will come for the audit and how to make payment before the visit. After payment, reply to this email with your proof of payment so we can confirm your slot.
                                     </p>
                                     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="font-size:14px;line-height:1.6;">
                                         @if($paymentDate)
                                             <tr>
-                                                <td style="padding:4px 0;color:#6b7280;width:140px;vertical-align:top;"><strong>Date</strong></td>
+                                                <td style="padding:4px 0;color:#6b7280;width:140px;vertical-align:top;"><strong>Audit date</strong></td>
                                                 <td style="padding:4px 0;color:#111827;">{{ $paymentDate }}</td>
                                             </tr>
                                         @endif
                                         @if($paymentTime)
                                             <tr>
-                                                <td style="padding:4px 0;color:#6b7280;vertical-align:top;"><strong>Time</strong></td>
+                                                <td style="padding:4px 0;color:#6b7280;vertical-align:top;"><strong>Audit time</strong></td>
                                                 <td style="padding:4px 0;color:#111827;">{{ $paymentTime }}</td>
                                             </tr>
                                         @endif
@@ -66,7 +66,7 @@
                                         @endif
                                         @if($paymentAccount)
                                             <tr>
-                                                <td style="padding:4px 0;color:#6b7280;vertical-align:top;"><strong>Account details</strong></td>
+                                                <td style="padding:4px 0;color:#6b7280;vertical-align:top;"><strong>Payment account details</strong></td>
                                                 <td style="padding:4px 0;color:#111827;white-space:pre-wrap;">{{ $paymentAccount }}</td>
                                             </tr>
                                         @endif
