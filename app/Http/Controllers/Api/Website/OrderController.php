@@ -2617,19 +2617,16 @@ class OrderController extends Controller
     }
 
     /**
-     * Hide Installation Material Cost order-list rows when they should not appear for this order
-     * (own installer, or materials were not charged).
+     * Hide Installation Material Cost order-list rows when they should not appear for this order.
+     * Order-list material rows are catalog lines (bundle [OL] items), separate from the payment
+     * summary material_cost fee — do not hide Troosolar installer rows based on orders.material_cost.
      *
      * @param  array<int, array<string, mixed>>  $lines
      * @return array<int, array<string, mixed>>
      */
     private function filterBundleOrderListLinesForOrder(array $lines, ?Order $order, ?string $installerChoice): array
     {
-        $materialCost = ($order && Schema::hasColumn('orders', 'material_cost'))
-            ? (float) ($order->material_cost ?? 0)
-            : 0.0;
-
-        return array_values(array_filter($lines, static function (array $line) use ($installerChoice, $materialCost) {
+        return array_values(array_filter($lines, static function (array $line) use ($installerChoice) {
             $desc = strtolower(trim((string) ($line['description'] ?? $line['name'] ?? '')));
             $isMaterialLine = str_contains($desc, 'installation material')
                 || $desc === 'material cost'
@@ -2644,12 +2641,14 @@ class OrderController extends Controller
                 return false;
             }
 
-            // Materials not charged on the order — do not list a ₦0 material cost row.
-            if ($materialCost <= 0.005) {
-                return false;
-            }
+            // Troosolar installer: keep the row when it has a catalog amount on the line.
+            $lineAmount = max(
+                (float) ($line['rate'] ?? 0),
+                (float) ($line['price'] ?? 0),
+                (float) ($line['total_cost'] ?? 0)
+            );
 
-            return true;
+            return $lineAmount > 0.005;
         }));
     }
 
