@@ -35,6 +35,7 @@ class AuditController extends Controller
                 'audit_type' => 'required|in:home-office,commercial',
                 'audit_subtype' => 'nullable|in:home,office',
                 'customer_type' => 'nullable|in:residential,sme,commercial',
+                'product_category' => 'nullable|string|max:100',
                 'source' => 'nullable|in:buy_now,bnpl',
                 'company_name' => [
                     Rule::requiredIf(fn () => $isCommercial || $isOfficeSubtype),
@@ -132,6 +133,12 @@ class AuditController extends Controller
                 'estate_address' => !empty($data['estate_address']) ? (string) $data['estate_address'] : null,
             ];
 
+            if (Schema::hasColumn('audit_requests', 'product_category')) {
+                $auditData['product_category'] = !empty($data['product_category'])
+                    ? (string) $data['product_category']
+                    : null;
+            }
+
             if (Schema::hasColumn('audit_requests', 'source')) {
                 $auditData['source'] = isset($data['source']) && $data['source'] !== ''
                     ? (string) $data['source']
@@ -176,6 +183,7 @@ class AuditController extends Controller
                 'audit_type' => $auditRequest->audit_type,
                 'audit_subtype' => Schema::hasColumn('audit_requests', 'audit_subtype') ? $auditRequest->audit_subtype : null,
                 'customer_type' => $auditRequest->customer_type,
+                'product_category' => Schema::hasColumn('audit_requests', 'product_category') ? $auditRequest->product_category : null,
                 'company_name' => Schema::hasColumn('audit_requests', 'company_name') ? $auditRequest->company_name : null,
                 'status' => $auditRequest->status,
                 'property_state' => $auditRequest->property_state,
@@ -270,6 +278,8 @@ class AuditController extends Controller
                 'id' => $auditRequest->id,
                 'audit_type' => $auditRequest->audit_type,
                 'audit_subtype' => Schema::hasColumn('audit_requests', 'audit_subtype') ? $auditRequest->audit_subtype : null,
+                'customer_type' => Schema::hasColumn('audit_requests', 'customer_type') ? $auditRequest->customer_type : null,
+                'product_category' => Schema::hasColumn('audit_requests', 'product_category') ? $auditRequest->product_category : null,
                 'company_name' => Schema::hasColumn('audit_requests', 'company_name') ? $auditRequest->company_name : null,
                 'status' => $auditRequest->status,
                 'property_state' => $auditRequest->property_state,
@@ -348,6 +358,7 @@ class AuditController extends Controller
                         'audit_type' => $request->audit_type,
                         'audit_subtype' => Schema::hasColumn('audit_requests', 'audit_subtype') ? $request->audit_subtype : null,
                         'customer_type' => Schema::hasColumn('audit_requests', 'customer_type') ? $request->customer_type : null,
+                        'product_category' => Schema::hasColumn('audit_requests', 'product_category') ? $request->product_category : null,
                         'company_name' => Schema::hasColumn('audit_requests', 'company_name') ? $request->company_name : null,
                         'building_type' => Schema::hasColumn('audit_requests', 'building_type') ? $request->building_type : null,
                         'facility_description' => Schema::hasColumn('audit_requests', 'facility_description') ? $request->facility_description : null,

@@ -29,6 +29,7 @@ class Order extends Model
         'vat_amount',
         'order_type',
         'customer_type',
+        'product_category',
         'installer_choice',
         'property_floors',
         'property_rooms',

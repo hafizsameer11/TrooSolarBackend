@@ -15,6 +15,7 @@ class AuditRequest extends Model
         'audit_type',
         'audit_subtype',
         'customer_type',
+        'product_category',
         'source',
         'company_name',
         'property_state',
