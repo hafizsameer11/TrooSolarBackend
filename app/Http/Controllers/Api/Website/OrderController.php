@@ -955,7 +955,6 @@ class OrderController extends Controller
             'estimated_delivery_to' => optional($order->estimated_delivery_to)->format('Y-m-d'),
             'delivery_estimate_label' => $order->delivery_estimate_label,
             'customer_type' => Schema::hasColumn('orders', 'customer_type') ? ($order->customer_type ?? null) : null,
-            'product_category' => Schema::hasColumn('orders', 'product_category') ? ($order->product_category ?? null) : null,
             'installer_choice' => Schema::hasColumn('orders', 'installer_choice') ? ($order->installer_choice ?? null) : null,
             'property_floors' => Schema::hasColumn('orders', 'property_floors') ? $order->property_floors : null,
             'property_rooms' => Schema::hasColumn('orders', 'property_rooms') ? $order->property_rooms : null,
@@ -1641,9 +1640,6 @@ class OrderController extends Controller
                 'insurance_fee' => $insuranceFee,
                 'vat_amount' => $vatAmount,
                 'customer_type' => $data['customer_type'] ?? null,
-                'product_category' => isset($data['product_category']) && trim((string) $data['product_category']) !== ''
-                    ? trim((string) $data['product_category'])
-                    : null,
                 'installer_choice' => $installerChoice,
                 'property_floors' => isset($data['property_floors']) ? (int) $data['property_floors'] : null,
                 'property_rooms' => isset($data['property_rooms']) ? (int) $data['property_rooms'] : null,
@@ -3559,9 +3555,7 @@ class OrderController extends Controller
                 'vat_amount' => Schema::hasColumn('orders', 'vat_amount') ? (float) ($order->vat_amount ?? 0) : null,
                 'bundle_title' => $resolvedBundle?->title ?? $order->bundle?->title,
                 'product_title' => $resolvedProduct?->title ?? $order->product?->title,
-                'product_category' => Schema::hasColumn('orders', 'product_category') && ! empty($order->product_category)
-                    ? $order->product_category
-                    : ($order->loanApplication?->product_category),
+                'product_category' => $order->loanApplication?->product_category,
                 'customer_type' => Schema::hasColumn('orders', 'customer_type') ? ($order->customer_type ?? null) : null,
                 'installer_choice' => Schema::hasColumn('orders', 'installer_choice') ? ($order->installer_choice ?? null) : null,
                 'property_floors' => Schema::hasColumn('orders', 'property_floors') ? $order->property_floors : null,
@@ -3792,7 +3786,6 @@ class OrderController extends Controller
                 'delivery_address' => $this->formatDeliveryAddressForApi($order->deliveryAddress, $order->user),
                 'installation_requested_date' => $installationRequested,
                 'customer_type' => Schema::hasColumn('orders', 'customer_type') ? ($order->customer_type ?? null) : null,
-                'product_category' => Schema::hasColumn('orders', 'product_category') ? ($order->product_category ?? null) : null,
                 'installer_choice' => $this->resolveOrderInstallerChoice($order),
                 'invoice' => [
                     'solar_inverter' => $productBreakdown['solar_inverter'],
