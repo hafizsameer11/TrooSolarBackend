@@ -323,6 +323,12 @@ class AuditController extends Controller
                 'customer_payment_time' => Schema::hasColumn('audit_requests', 'customer_payment_time')
                     ? $auditRequest->customer_payment_time
                     : null,
+                'customer_payment_receipt_path' => Schema::hasColumn('audit_requests', 'customer_payment_receipt_path')
+                    ? $auditRequest->customer_payment_receipt_path
+                    : null,
+                'customer_payment_receipt_url' => Schema::hasColumn('audit_requests', 'customer_payment_receipt_path') && $auditRequest->customer_payment_receipt_path
+                    ? \App\Models\SiteBanner::resolvePublicUrl(request(), $auditRequest->customer_payment_receipt_path)
+                    : null,
                 'approved_by' => $auditRequest->approver ? [
                     'id' => $auditRequest->approver->id,
                     'name' => $auditRequest->approver->first_name . ' ' . $auditRequest->approver->sur_name,
@@ -403,6 +409,12 @@ class AuditController extends Controller
                             : null,
                         'customer_payment_time' => Schema::hasColumn('audit_requests', 'customer_payment_time')
                             ? $request->customer_payment_time
+                            : null,
+                        'customer_payment_receipt_path' => Schema::hasColumn('audit_requests', 'customer_payment_receipt_path')
+                            ? $request->customer_payment_receipt_path
+                            : null,
+                        'customer_payment_receipt_url' => Schema::hasColumn('audit_requests', 'customer_payment_receipt_path') && $request->customer_payment_receipt_path
+                            ? \App\Models\SiteBanner::resolvePublicUrl(request(), $request->customer_payment_receipt_path)
                             : null,
                         'approved_at' => $request->approved_at?->toIso8601String(),
                         'created_at' => $request->created_at->toIso8601String(),

@@ -41,6 +41,7 @@ class AuditRequest extends Model
         'customer_has_paid',
         'customer_payment_date',
         'customer_payment_time',
+        'customer_payment_receipt_path',
         'approved_by',
         'approved_at',
     ];

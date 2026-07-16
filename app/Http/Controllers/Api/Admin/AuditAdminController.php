@@ -7,6 +7,7 @@ use App\Helpers\ResponseHelper;
 use App\Mail\AuditStatusEmail;
 use App\Models\AuditRequest;
 use App\Models\CartItem;
+use App\Models\SiteBanner;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -35,17 +36,34 @@ class AuditAdminController extends Controller
         ];
     }
 
-    private function formatCustomerPaymentFields(AuditRequest $request): array
+    private function formatCustomerPaymentFields(AuditRequest $request, ?Request $httpRequest = null): array
     {
         if (! Schema::hasColumn('audit_requests', 'customer_has_paid')) {
             return [];
         }
 
+        $receiptPath = Schema::hasColumn('audit_requests', 'customer_payment_receipt_path')
+            ? $request->customer_payment_receipt_path
+            : null;
+
         return [
             'customer_has_paid' => (bool) $request->customer_has_paid,
             'customer_payment_date' => $request->customer_payment_date?->format('Y-m-d'),
             'customer_payment_time' => $request->customer_payment_time,
+            'customer_payment_receipt_path' => $receiptPath,
+            'customer_payment_receipt_url' => SiteBanner::resolvePublicUrl($httpRequest, $receiptPath),
         ];
+    }
+
+    private function deleteAuditPaymentReceiptFile(?string $relativePath): void
+    {
+        if (empty($relativePath)) {
+            return;
+        }
+        $fullPath = public_path(ltrim($relativePath, '/'));
+        if (is_file($fullPath)) {
+            @unlink($fullPath);
+        }
     }
     /**
      * Get all users who have made audit requests
@@ -305,57 +323,57 @@ class AuditAdminController extends Controller
                 ->paginate($request->get('per_page', 15));
 
             // Format the response to include additional helpful fields
-            $formattedData = collect($auditRequests->items())->map(function ($request) {
+            $formattedData = collect($auditRequests->items())->map(function ($auditRow) use ($request) {
                 return [
-                    'id' => $request->id,
-                    'audit_type' => $request->audit_type,
-                    'audit_subtype' => $request->audit_subtype,
-                    'customer_type' => $request->customer_type,
-                    'product_category' => $request->product_category,
-                    'company_name' => $request->company_name,
-                    'source' => $request->source,
-                    'status' => $request->status,
-                    'user' => $request->user ? [
-                        'id' => $request->user->id,
-                        'first_name' => $request->user->first_name,
-                        'sur_name' => $request->user->sur_name,
-                        'name' => trim(($request->user->first_name ?? '') . ' ' . ($request->user->sur_name ?? '')),
-                        'email' => $request->user->email,
-                        'phone' => $request->user->phone,
+                    'id' => $auditRow->id,
+                    'audit_type' => $auditRow->audit_type,
+                    'audit_subtype' => $auditRow->audit_subtype,
+                    'customer_type' => $auditRow->customer_type,
+                    'product_category' => $auditRow->product_category,
+                    'company_name' => $auditRow->company_name,
+                    'source' => $auditRow->source,
+                    'status' => $auditRow->status,
+                    'user' => $auditRow->user ? [
+                        'id' => $auditRow->user->id,
+                        'first_name' => $auditRow->user->first_name,
+                        'sur_name' => $auditRow->user->sur_name,
+                        'name' => trim(($auditRow->user->first_name ?? '') . ' ' . ($auditRow->user->sur_name ?? '')),
+                        'email' => $auditRow->user->email,
+                        'phone' => $auditRow->user->phone,
                     ] : null,
-                    'property_state' => $request->property_state,
-                    'property_address' => $request->property_address,
-                    'contact_name' => $request->contact_name,
-                    'contact_phone' => $request->contact_phone,
-                    'property_landmark' => $request->property_landmark,
-                    'building_type' => $request->building_type,
-                    'facility_description' => $request->facility_description,
-                    'property_floors' => $request->property_floors,
-                    'property_rooms' => $request->property_rooms,
-                    'is_gated_estate' => $request->is_gated_estate,
-                    'estate_name' => $request->estate_name,
-                    'estate_address' => $request->estate_address,
-                    'preferred_audit_date' => $request->preferred_audit_date?->format('Y-m-d'),
-                    'preferred_audit_time' => $request->preferred_audit_time,
-                    'has_property_details' => !empty($request->property_address), // Indicates if user provided property details
-                    'needs_admin_input' => $request->audit_type === 'commercial' && empty($request->property_address), // Commercial requests may need admin to gather details
-                    'admin_notes' => $request->admin_notes,
-                    ...$this->formatApprovalPaymentFields($request),
-                    ...$this->formatCustomerPaymentFields($request),
-                    'approved_by' => $request->approver ? [
-                        'id' => $request->approver->id,
-                        'name' => trim(($request->approver->first_name ?? '') . ' ' . ($request->approver->sur_name ?? '')),
-                        'email' => $request->approver->email,
+                    'property_state' => $auditRow->property_state,
+                    'property_address' => $auditRow->property_address,
+                    'contact_name' => $auditRow->contact_name,
+                    'contact_phone' => $auditRow->contact_phone,
+                    'property_landmark' => $auditRow->property_landmark,
+                    'building_type' => $auditRow->building_type,
+                    'facility_description' => $auditRow->facility_description,
+                    'property_floors' => $auditRow->property_floors,
+                    'property_rooms' => $auditRow->property_rooms,
+                    'is_gated_estate' => $auditRow->is_gated_estate,
+                    'estate_name' => $auditRow->estate_name,
+                    'estate_address' => $auditRow->estate_address,
+                    'preferred_audit_date' => $auditRow->preferred_audit_date?->format('Y-m-d'),
+                    'preferred_audit_time' => $auditRow->preferred_audit_time,
+                    'has_property_details' => !empty($auditRow->property_address), // Indicates if user provided property details
+                    'needs_admin_input' => $auditRow->audit_type === 'commercial' && empty($auditRow->property_address), // Commercial requests may need admin to gather details
+                    'admin_notes' => $auditRow->admin_notes,
+                    ...$this->formatApprovalPaymentFields($auditRow),
+                    ...$this->formatCustomerPaymentFields($auditRow, $request),
+                    'approved_by' => $auditRow->approver ? [
+                        'id' => $auditRow->approver->id,
+                        'name' => trim(($auditRow->approver->first_name ?? '') . ' ' . ($auditRow->approver->sur_name ?? '')),
+                        'email' => $auditRow->approver->email,
                     ] : null,
-                    'approved_at' => $request->approved_at?->toIso8601String(),
-                    'order' => $request->order ? [
-                        'id' => $request->order->id,
-                        'order_number' => $request->order->order_number,
-                        'total_price' => $request->order->total_price,
-                        'payment_status' => $request->order->payment_status,
+                    'approved_at' => $auditRow->approved_at?->toIso8601String(),
+                    'order' => $auditRow->order ? [
+                        'id' => $auditRow->order->id,
+                        'order_number' => $auditRow->order->order_number,
+                        'total_price' => $auditRow->order->total_price,
+                        'payment_status' => $auditRow->order->payment_status,
                     ] : null,
-                    'created_at' => $request->created_at->toIso8601String(),
-                    'updated_at' => $request->updated_at->toIso8601String(),
+                    'created_at' => $auditRow->created_at->toIso8601String(),
+                    'updated_at' => $auditRow->updated_at->toIso8601String(),
                 ];
             });
 
@@ -380,7 +398,7 @@ class AuditAdminController extends Controller
      * Get single audit request details
      * GET /api/admin/audit/requests/{id}
      */
-    public function show($id)
+    public function show(Request $request, $id)
     {
         try {
             $auditRequest = AuditRequest::with([
@@ -422,7 +440,7 @@ class AuditAdminController extends Controller
                 'status' => $auditRequest->status,
                 'admin_notes' => $auditRequest->admin_notes,
                 ...$this->formatApprovalPaymentFields($auditRequest),
-                ...$this->formatCustomerPaymentFields($auditRequest),
+                ...$this->formatCustomerPaymentFields($auditRequest, $request),
                 'approved_by' => $auditRequest->approver ? [
                     'id' => $auditRequest->approver->id,
                     'name' => $auditRequest->approver->first_name . ' ' . $auditRequest->approver->sur_name,
@@ -538,6 +556,10 @@ class AuditAdminController extends Controller
                 } else {
                     $auditRequest->customer_payment_date = null;
                     $auditRequest->customer_payment_time = null;
+                    if (Schema::hasColumn('audit_requests', 'customer_payment_receipt_path')) {
+                        $this->deleteAuditPaymentReceiptFile($auditRequest->customer_payment_receipt_path);
+                        $auditRequest->customer_payment_receipt_path = null;
+                    }
                 }
             }
 
@@ -575,7 +597,7 @@ class AuditAdminController extends Controller
                 'status' => $auditRequest->status,
                 'admin_notes' => $auditRequest->admin_notes,
                 ...$this->formatApprovalPaymentFields($auditRequest),
-                ...$this->formatCustomerPaymentFields($auditRequest),
+                ...$this->formatCustomerPaymentFields($auditRequest, $request),
                 'property_state' => $auditRequest->property_state,
                 'property_address' => $auditRequest->property_address,
                 'contact_name' => $auditRequest->contact_name,
@@ -589,6 +611,59 @@ class AuditAdminController extends Controller
         } catch (Exception $e) {
             Log::error('Audit Admin Update Status Error: ' . $e->getMessage());
             return ResponseHelper::error('Failed to update audit request status', 500);
+        }
+    }
+
+    /**
+     * Upload payment receipt for an audit request (admin only).
+     * POST /api/admin/audit/requests/{id}/payment-receipt
+     */
+    public function uploadPaymentReceipt(Request $request, $id)
+    {
+        try {
+            if (! Schema::hasColumn('audit_requests', 'customer_payment_receipt_path')) {
+                return ResponseHelper::error('Payment receipt storage is not available. Please run migrations.', 500);
+            }
+
+            $data = $request->validate([
+                'payment_receipt' => 'required|file|mimes:pdf,jpg,jpeg,png|max:5120',
+            ]);
+
+            $auditRequest = AuditRequest::findOrFail($id);
+
+            $dir = public_path('audit_requests');
+            if (! is_dir($dir)) {
+                mkdir($dir, 0755, true);
+            }
+
+            $file = $data['payment_receipt'];
+            $ext = strtolower($file->getClientOriginalExtension() ?: 'pdf');
+            $fileName = 'payment_receipt_' . $auditRequest->id . '_' . time() . '.' . $ext;
+            $file->move($dir, $fileName);
+            $relativePath = 'audit_requests/' . $fileName;
+
+            $this->deleteAuditPaymentReceiptFile($auditRequest->customer_payment_receipt_path);
+            $auditRequest->customer_payment_receipt_path = $relativePath;
+            if (Schema::hasColumn('audit_requests', 'customer_has_paid') && ! $auditRequest->customer_has_paid) {
+                $auditRequest->customer_has_paid = true;
+            }
+            $auditRequest->save();
+
+            return ResponseHelper::success([
+                'id' => $auditRequest->id,
+                ...$this->formatCustomerPaymentFields($auditRequest, $request),
+            ], 'Payment receipt uploaded successfully');
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (Exception $e) {
+            Log::error('Audit payment receipt upload failed: ' . $e->getMessage(), [
+                'audit_request_id' => $id,
+            ]);
+            return ResponseHelper::error('Failed to upload payment receipt', 500);
         }
     }
 }

@@ -496,6 +496,7 @@ Route::post('bundles/{bundle}/update', [BundleController::class, 'update'])
         Route::get('/requests', [\App\Http\Controllers\Api\Admin\AuditAdminController::class, 'index']);
         Route::get('/requests/{id}', [\App\Http\Controllers\Api\Admin\AuditAdminController::class, 'show']);
         Route::put('/requests/{id}/status', [\App\Http\Controllers\Api\Admin\AuditAdminController::class, 'updateStatus']);
+        Route::post('/requests/{id}/payment-receipt', [\App\Http\Controllers\Api\Admin\AuditAdminController::class, 'uploadPaymentReceipt']);
     });
 
     // ================= BUY NOW ADMIN ROUTES =================
