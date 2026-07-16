@@ -304,6 +304,15 @@ class AuditController extends Controller
                 'approval_payment_account_details' => Schema::hasColumn('audit_requests', 'approval_payment_account_details')
                     ? $auditRequest->approval_payment_account_details
                     : null,
+                'customer_has_paid' => Schema::hasColumn('audit_requests', 'customer_has_paid')
+                    ? (bool) $auditRequest->customer_has_paid
+                    : false,
+                'customer_payment_date' => Schema::hasColumn('audit_requests', 'customer_payment_date')
+                    ? $auditRequest->customer_payment_date?->format('Y-m-d')
+                    : null,
+                'customer_payment_time' => Schema::hasColumn('audit_requests', 'customer_payment_time')
+                    ? $auditRequest->customer_payment_time
+                    : null,
                 'approved_by' => $auditRequest->approver ? [
                     'id' => $auditRequest->approver->id,
                     'name' => $auditRequest->approver->first_name . ' ' . $auditRequest->approver->sur_name,
@@ -371,6 +380,15 @@ class AuditController extends Controller
                             : null,
                         'approval_payment_account_details' => Schema::hasColumn('audit_requests', 'approval_payment_account_details')
                             ? $request->approval_payment_account_details
+                            : null,
+                        'customer_has_paid' => Schema::hasColumn('audit_requests', 'customer_has_paid')
+                            ? (bool) $request->customer_has_paid
+                            : false,
+                        'customer_payment_date' => Schema::hasColumn('audit_requests', 'customer_payment_date')
+                            ? $request->customer_payment_date?->format('Y-m-d')
+                            : null,
+                        'customer_payment_time' => Schema::hasColumn('audit_requests', 'customer_payment_time')
+                            ? $request->customer_payment_time
                             : null,
                         'approved_at' => $request->approved_at?->toIso8601String(),
                         'created_at' => $request->created_at->toIso8601String(),

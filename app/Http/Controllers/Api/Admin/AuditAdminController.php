@@ -34,6 +34,19 @@ class AuditAdminController extends Controller
             'approval_payment_account_details' => $request->approval_payment_account_details,
         ];
     }
+
+    private function formatCustomerPaymentFields(AuditRequest $request): array
+    {
+        if (! Schema::hasColumn('audit_requests', 'customer_has_paid')) {
+            return [];
+        }
+
+        return [
+            'customer_has_paid' => (bool) $request->customer_has_paid,
+            'customer_payment_date' => $request->customer_payment_date?->format('Y-m-d'),
+            'customer_payment_time' => $request->customer_payment_time,
+        ];
+    }
     /**
      * Get all users who have made audit requests
      * GET /api/admin/audit/users-with-requests
@@ -326,6 +339,7 @@ class AuditAdminController extends Controller
                     'needs_admin_input' => $request->audit_type === 'commercial' && empty($request->property_address), // Commercial requests may need admin to gather details
                     'admin_notes' => $request->admin_notes,
                     ...$this->formatApprovalPaymentFields($request),
+                    ...$this->formatCustomerPaymentFields($request),
                     'approved_by' => $request->approver ? [
                         'id' => $request->approver->id,
                         'name' => trim(($request->approver->first_name ?? '') . ' ' . ($request->approver->sur_name ?? '')),
@@ -405,6 +419,7 @@ class AuditAdminController extends Controller
                 'status' => $auditRequest->status,
                 'admin_notes' => $auditRequest->admin_notes,
                 ...$this->formatApprovalPaymentFields($auditRequest),
+                ...$this->formatCustomerPaymentFields($auditRequest),
                 'approved_by' => $auditRequest->approver ? [
                     'id' => $auditRequest->approver->id,
                     'name' => $auditRequest->approver->first_name . ' ' . $auditRequest->approver->sur_name,
@@ -464,9 +479,22 @@ class AuditAdminController extends Controller
                     'string',
                     'max:2000',
                 ],
+                'customer_has_paid' => 'nullable|boolean',
+                'customer_payment_date' => [
+                    Rule::requiredIf(fn () => filter_var($request->input('customer_has_paid'), FILTER_VALIDATE_BOOLEAN)),
+                    'nullable',
+                    'date',
+                ],
+                'customer_payment_time' => [
+                    Rule::requiredIf(fn () => filter_var($request->input('customer_has_paid'), FILTER_VALIDATE_BOOLEAN)),
+                    'nullable',
+                    'string',
+                    'max:20',
+                ],
             ]);
 
             $auditRequest = AuditRequest::findOrFail($id);
+            $previousStatus = $auditRequest->status;
 
             $auditRequest->status = $data['status'];
             $auditRequest->admin_notes = $data['admin_notes'] ?? $auditRequest->admin_notes;
@@ -496,15 +524,34 @@ class AuditAdminController extends Controller
                 }
             }
 
+            if (Schema::hasColumn('audit_requests', 'customer_has_paid') && array_key_exists('customer_has_paid', $data)) {
+                $hasPaid = filter_var($data['customer_has_paid'], FILTER_VALIDATE_BOOLEAN);
+                $auditRequest->customer_has_paid = $hasPaid;
+                if ($hasPaid) {
+                    $auditRequest->customer_payment_date = $data['customer_payment_date'] ?? null;
+                    $auditRequest->customer_payment_time = ! empty($data['customer_payment_time'])
+                        ? (string) $data['customer_payment_time']
+                        : null;
+                } else {
+                    $auditRequest->customer_payment_date = null;
+                    $auditRequest->customer_payment_time = null;
+                }
+            }
+
             if ($data['status'] === 'approved' || $data['status'] === 'completed') {
-                $auditRequest->approved_by = Auth::id();
-                $auditRequest->approved_at = now();
+                if ($previousStatus !== $data['status'] || ! $auditRequest->approved_at) {
+                    $auditRequest->approved_by = Auth::id();
+                    $auditRequest->approved_at = now();
+                }
             }
 
             $auditRequest->save();
 
-            // Customer emails: approved and rejected only (no email for "completed").
-            if (in_array($data['status'], ['approved', 'rejected'], true)) {
+            // Customer emails only when status actually changes to approved/rejected.
+            if (
+                in_array($data['status'], ['approved', 'rejected'], true)
+                && $previousStatus !== $data['status']
+            ) {
                 $auditRequest->loadMissing('user');
                 $user = $auditRequest->user;
                 if ($user && !empty($user->email)) {
@@ -525,6 +572,7 @@ class AuditAdminController extends Controller
                 'status' => $auditRequest->status,
                 'admin_notes' => $auditRequest->admin_notes,
                 ...$this->formatApprovalPaymentFields($auditRequest),
+                ...$this->formatCustomerPaymentFields($auditRequest),
                 'property_state' => $auditRequest->property_state,
                 'property_address' => $auditRequest->property_address,
                 'contact_name' => $auditRequest->contact_name,

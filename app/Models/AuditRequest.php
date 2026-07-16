@@ -37,16 +37,21 @@ class AuditRequest extends Model
         'approval_payment_time',
         'approval_payment_amount',
         'approval_payment_account_details',
+        'customer_has_paid',
+        'customer_payment_date',
+        'customer_payment_time',
         'approved_by',
         'approved_at',
     ];
 
     protected $casts = [
         'is_gated_estate' => 'boolean',
+        'customer_has_paid' => 'boolean',
         'property_floors' => 'integer',
         'property_rooms' => 'integer',
         'preferred_audit_date' => 'date',
         'approval_payment_date' => 'date',
+        'customer_payment_date' => 'date',
         'approval_payment_amount' => 'decimal:2',
         'approved_at' => 'datetime',
     ];
