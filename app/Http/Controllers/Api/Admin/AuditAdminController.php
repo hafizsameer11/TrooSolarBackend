@@ -66,6 +66,30 @@ class AuditAdminController extends Controller
             @unlink($fullPath);
         }
     }
+
+    private function sendAuditPaymentConfirmedEmail(AuditRequest $auditRequest): void
+    {
+        $auditRequest->loadMissing('user');
+        $user = $auditRequest->user;
+        if (! $user || empty($user->email)) {
+            Log::warning('Audit payment confirmation email skipped: customer email missing', [
+                'audit_request_id' => $auditRequest->id,
+                'user_id' => $auditRequest->user_id,
+            ]);
+
+            return;
+        }
+
+        try {
+            Mail::to($user->email)->send(new AuditPaymentConfirmedEmail($user, $auditRequest));
+        } catch (\Throwable $e) {
+            Log::error('Audit payment confirmation email failed: ' . $e->getMessage(), [
+                'audit_request_id' => $auditRequest->id,
+                'user_id' => $user->id,
+                'trace' => $e->getTraceAsString(),
+            ]);
+        }
+    }
     /**
      * Get all users who have made audit requests
      * GET /api/admin/audit/users-with-requests
@@ -517,6 +541,9 @@ class AuditAdminController extends Controller
 
             $auditRequest = AuditRequest::with('user')->findOrFail($id);
             $previousStatus = $auditRequest->status;
+            $wasCustomerPaid = Schema::hasColumn('audit_requests', 'customer_has_paid')
+                ? (bool) $auditRequest->customer_has_paid
+                : false;
 
             $auditRequest->status = $data['status'];
             $auditRequest->admin_notes = $data['admin_notes'] ?? $auditRequest->admin_notes;
@@ -593,6 +620,17 @@ class AuditAdminController extends Controller
                 }
             }
 
+            // Payment confirmation: when payment is newly marked paid and a receipt is already on file.
+            // (If a new receipt is uploaded in the same admin action, uploadPaymentReceipt also sends this email.)
+            $nowCustomerPaid = Schema::hasColumn('audit_requests', 'customer_has_paid')
+                ? (bool) $auditRequest->customer_has_paid
+                : false;
+            $hasReceipt = Schema::hasColumn('audit_requests', 'customer_payment_receipt_path')
+                && ! empty($auditRequest->customer_payment_receipt_path);
+            if (! $wasCustomerPaid && $nowCustomerPaid && $hasReceipt) {
+                $this->sendAuditPaymentConfirmedEmail($auditRequest);
+            }
+
             return ResponseHelper::success([
                 'id' => $auditRequest->id,
                 'status' => $auditRequest->status,
@@ -630,7 +668,8 @@ class AuditAdminController extends Controller
                 'payment_receipt' => 'required|file|mimes:pdf,jpg,jpeg,png|max:5120',
             ]);
 
-            $auditRequest = AuditRequest::findOrFail($id);
+            $auditRequest = AuditRequest::with('user')->findOrFail($id);
+            $hadReceipt = ! empty($auditRequest->customer_payment_receipt_path);
 
             $dir = public_path('audit_requests');
             if (! is_dir($dir)) {
@@ -649,22 +688,16 @@ class AuditAdminController extends Controller
                 $auditRequest->customer_has_paid = true;
             }
             $auditRequest->save();
+            $auditRequest->refresh();
 
-            $user = $auditRequest->user;
-            if ($user && ! empty($user->email)) {
-                try {
-                    Mail::to($user->email)->send(new AuditPaymentConfirmedEmail($user, $auditRequest));
-                } catch (\Throwable $e) {
-                    Log::warning('Audit payment confirmation email failed: ' . $e->getMessage(), [
-                        'audit_request_id' => $auditRequest->id,
-                        'user_id' => $user->id,
-                    ]);
-                }
-            }
+            // Always notify customer when a payment receipt is uploaded/replaced.
+            $this->sendAuditPaymentConfirmedEmail($auditRequest);
 
             return ResponseHelper::success([
                 'id' => $auditRequest->id,
                 ...$this->formatCustomerPaymentFields($auditRequest, $request),
+                'payment_confirmation_email_sent' => true,
+                'receipt_replaced' => $hadReceipt,
             ], 'Payment receipt uploaded successfully');
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
@@ -675,6 +708,7 @@ class AuditAdminController extends Controller
         } catch (Exception $e) {
             Log::error('Audit payment receipt upload failed: ' . $e->getMessage(), [
                 'audit_request_id' => $id,
+                'trace' => $e->getTraceAsString(),
             ]);
             return ResponseHelper::error('Failed to upload payment receipt', 500);
         }
