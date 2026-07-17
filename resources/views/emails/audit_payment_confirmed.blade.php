@@ -20,7 +20,11 @@
                         <h1 style="margin:0 0 14px;font-size:22px;line-height:1.3;color:#111827;">{{ $headingText }}</h1>
                         <p style="margin:0 0 10px;font-size:15px;line-height:1.6;">Hello {{ trim(($user->first_name ?? '').' '.($user->sur_name ?? '')) ?: 'Customer' }},</p>
                         <p style="margin:0 0 14px;font-size:15px;line-height:1.6;">
-                            We have confirmed your payment receipt for your {{ $auditTypeTitle }} audit request@if(!empty($solutionLabel)) ({{ $solutionLabel }})@endif. Your audit date and time are now confirmed.
+                            @if(!empty($solutionLabel))
+                                We have confirmed your payment receipt for your {{ $auditTypeTitle }} audit request ({{ $solutionLabel }}). Your audit date and time are now confirmed.
+                            @else
+                                We have confirmed your payment receipt for your {{ $auditTypeTitle }} audit request. Your audit date and time are now confirmed.
+                            @endif
                         </p>
 
                         @php
