@@ -20,6 +20,7 @@ class AuditPaymentConfirmedEmail extends Mailable
     public string $subjectLine;
     public string $headingText;
     public string $auditTypeTitle;
+    public ?string $solutionLabel;
 
     public function __construct(User $user, AuditRequest $auditRequest)
     {
@@ -28,6 +29,7 @@ class AuditPaymentConfirmedEmail extends Mailable
         $this->subjectLine = 'Your audit payment has been confirmed - Troosolar';
         $this->headingText = MailBrand::heading('Your audit date and time have been confirmed');
         $this->auditTypeTitle = AuditStatusEmail::auditTypeTitleCase($auditRequest);
+        $this->solutionLabel = AuditStatusEmail::productCategoryLabel($auditRequest->product_category ?? null);
     }
 
     public function envelope(): Envelope

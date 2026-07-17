@@ -24,7 +24,10 @@
                         <div style="margin:18px 0;padding:14px;border:1px solid #e5e7eb;border-radius:8px;background:#fafafa;">
                             <p style="margin:0 0 8px;font-size:14px;"><strong>Request ID:</strong> #{{ $auditRequest->id }}</p>
                             <p style="margin:0 0 8px;font-size:14px;"><strong>Status:</strong> {{ ucfirst($status) }}</p>
-                            <p style="margin:0;font-size:14px;"><strong>Audit type:</strong> {{ $auditTypeTitle }}</p>
+                            <p style="margin:0{{ !empty($solutionLabel) ? ' 0 8px' : '' }};font-size:14px;"><strong>Audit type:</strong> {{ $auditTypeTitle }}</p>
+                            @if(!empty($solutionLabel))
+                                <p style="margin:0;font-size:14px;"><strong>Solution:</strong> {{ $solutionLabel }}</p>
+                            @endif
                         @if($status === 'rejected' && !empty($auditRequest->admin_notes))
                             <p style="margin:12px 0 0;font-size:14px;line-height:1.5;color:#374151;"><strong>Note:</strong> {{ $auditRequest->admin_notes }}</p>
                         @endif

@@ -26,6 +26,9 @@ class AuditStatusEmail extends Mailable
     /** Title-case line for the summary box (e.g. Office, Home, Commercial / Industrial). */
     public string $auditTypeTitle;
 
+    /** Solution the customer chose before requesting audit (full-kit / inverter-battery, etc.). */
+    public ?string $solutionLabel;
+
     public function __construct(User $user, AuditRequest $auditRequest, string $status)
     {
         $this->user = $user;
@@ -33,6 +36,7 @@ class AuditStatusEmail extends Mailable
         $this->status = $status;
         $this->auditTypeLabel = self::auditTypeDisplayLabel($auditRequest);
         $this->auditTypeTitle = self::auditTypeTitleCase($auditRequest);
+        $this->solutionLabel = self::productCategoryLabel($auditRequest->product_category ?? null);
 
         if ($status === 'approved') {
             $this->subjectLine = 'Your audit request has been approved - Troosolar';
@@ -82,6 +86,24 @@ class AuditStatusEmail extends Mailable
         }
 
         return $r->audit_type ? ucfirst((string) $r->audit_type) : 'Audit';
+    }
+
+    public static function productCategoryLabel(?string $value): ?string
+    {
+        $v = strtolower(trim((string) $value));
+        if ($v === '') {
+            return null;
+        }
+
+        return match ($v) {
+            'full-kit' => 'Solar panels, inverter, and battery solution',
+            'inverter-battery' => 'Inverter and battery solution',
+            'battery-only' => 'Battery only',
+            'inverter-only' => 'Inverter only',
+            'panels-only' => 'Solar panels only',
+            'audit' => 'Professional energy audit',
+            default => str_replace('-', ' ', (string) $value),
+        };
     }
 
     public function envelope(): Envelope
