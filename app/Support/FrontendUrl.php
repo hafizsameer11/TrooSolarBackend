@@ -32,6 +32,12 @@ class FrontendUrl
         $tokenEnc = rawurlencode($accessToken);
         $typeEnc = rawurlencode($orderType);
 
+        // Buy Now custom orders open the Buy Now flow after product/bundle selection
+        // (installer / checkout options → order summary → payment summary).
+        if ($orderType === 'buy_now') {
+            return self::base()."/buy-now?token={$tokenEnc}&type={$typeEnc}&step=4";
+        }
+
         return self::base()."/cart?token={$tokenEnc}&type={$typeEnc}";
     }
 }
