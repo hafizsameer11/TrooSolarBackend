@@ -65,59 +65,74 @@ class AdminCartController extends Controller
             $orderType = $data['order_type'];
             $user = User::findOrFail($userId);
 
-            // Verify products/bundles exist and add to cart
+            // Build this custom order in isolation: replace the user's cart so the
+            // email/checkout link only contains the items for THIS order (not prior ones).
             $cartItems = [];
             $errors = [];
+            $token = null;
 
-            foreach ($items as $item) {
-                $type = $item['type'];
-                $itemId = $item['id'];
-                $quantity = $item['quantity'] ?? 1;
+            DB::transaction(function () use (
+                $items,
+                $userId,
+                $user,
+                &$cartItems,
+                &$errors,
+                &$token
+            ) {
+                CartItem::where('user_id', $userId)->delete();
 
-                if ($type === 'product') {
-                    $product = Product::find($itemId);
-                    if (!$product) {
-                        $errors[] = "Product ID {$itemId} not found";
-                        continue;
+                foreach ($items as $item) {
+                    $type = $item['type'];
+                    $itemId = $item['id'];
+                    $quantity = $item['quantity'] ?? 1;
+
+                    if ($type === 'product') {
+                        $product = Product::find($itemId);
+                        if (!$product) {
+                            $errors[] = "Product ID {$itemId} not found";
+                            continue;
+                        }
+                        $price = $product->discount_price ?? $product->price ?? 0;
+
+                        $cartItem = CartItem::create([
+                            'user_id' => $userId,
+                            'itemable_type' => Product::class,
+                            'itemable_id' => $itemId,
+                            'quantity' => $quantity,
+                            'unit_price' => $price,
+                            'subtotal' => $price * $quantity,
+                        ]);
+                        $cartItems[] = $cartItem;
+                    } elseif ($type === 'bundle') {
+                        $bundle = Bundles::find($itemId);
+                        if (!$bundle) {
+                            $errors[] = "Bundle ID {$itemId} not found";
+                            continue;
+                        }
+                        $price = $bundle->discount_price ?? $bundle->total_price ?? 0;
+
+                        $cartItem = CartItem::create([
+                            'user_id' => $userId,
+                            'itemable_type' => Bundles::class,
+                            'itemable_id' => $itemId,
+                            'quantity' => $quantity,
+                            'unit_price' => $price,
+                            'subtotal' => $price * $quantity,
+                        ]);
+                        $cartItems[] = $cartItem;
                     }
-                    $price = $product->discount_price ?? $product->price ?? 0;
-
-                    $cartItem = CartItem::create([
-                        'user_id' => $userId,
-                        'itemable_type' => Product::class,
-                        'itemable_id' => $itemId,
-                        'quantity' => $quantity,
-                        'unit_price' => $price,
-                        'subtotal' => $price * $quantity,
-                    ]);
-                    $cartItems[] = $cartItem;
-                } elseif ($type === 'bundle') {
-                    $bundle = Bundles::find($itemId);
-                    if (!$bundle) {
-                        $errors[] = "Bundle ID {$itemId} not found";
-                        continue;
-                    }
-                    $price = $bundle->discount_price ?? $bundle->total_price ?? 0;
-
-                    $cartItem = CartItem::create([
-                        'user_id' => $userId,
-                        'itemable_type' => Bundles::class,
-                        'itemable_id' => $itemId,
-                        'quantity' => $quantity,
-                        'unit_price' => $price,
-                        'subtotal' => $price * $quantity,
-                    ]);
-                    $cartItems[] = $cartItem;
                 }
-            }
 
-            if (!empty($errors)) {
-                return ResponseHelper::error('Some items could not be added: ' . implode(', ', $errors), 400);
-            }
+                if (!empty($errors)) {
+                    throw ValidationException::withMessages([
+                        'items' => ['Some items could not be added: ' . implode(', ', $errors)],
+                    ]);
+                }
 
-            // Generate cart access token (for email link)
-            $token = Str::random(64);
-            $user->update(['cart_access_token' => $token]);
+                // New token invalidates older custom-order email links for this user
+                $token = Str::random(64);
+                $user->update(['cart_access_token' => $token]);
+            });
 
             $emailMessage = $data['email_message'] ?? null;
             if (count($customItems) > 0) {
@@ -185,7 +200,7 @@ class AdminCartController extends Controller
                 'email_sent' => $emailSent,
                 'email_error' => $emailError,
             ], $emailSent || !$sendEmail
-                ? 'Custom order created and added to user cart successfully'
+                ? 'Custom order created and user cart replaced successfully'
                 : 'Custom order created but the notification email could not be sent');
 
         } catch (ValidationException $e) {
