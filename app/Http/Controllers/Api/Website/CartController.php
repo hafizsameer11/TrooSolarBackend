@@ -16,6 +16,7 @@ use App\Http\Requests\UpdateCartItemRequest;
 use App\Models\Bundles;
 use App\Models\CheckoutSetting;
 use App\Models\CustomOrderLink;
+use App\Models\AuditRequest;
 use App\Models\ReferralSettings;
 use App\Models\User;
 use App\Support\CheckoutPricing;
@@ -530,6 +531,7 @@ class CartController extends Controller
                 }
 
                 $cartItems = $customLink->resolveCartItems();
+                $latestAudit = AuditRequest::latestForUser((int) $user->id);
 
                 $authUser = $this->resolveBearerUser($request);
                 $isOwner = $authUser !== null && (int) $authUser->id === (int) $user->id;
@@ -544,6 +546,7 @@ class CartController extends Controller
                     'cart_items' => $cartItems->values(),
                     'custom_order_link_id' => $customLink->id,
                     'order_type' => $customLink->order_type,
+                    'latest_audit_request' => $latestAudit?->toBuyNowContext(),
                     'requires_login' => false,
                     'auto_authenticated' => $issuedToken !== null,
                     'access_token' => $issuedToken,
@@ -564,6 +567,8 @@ class CartController extends Controller
                 ->where('user_id', $user->id)
                 ->get();
 
+            $latestAudit = AuditRequest::latestForUser((int) $user->id);
+
             $authUser = $this->resolveBearerUser($request);
             $isOwner = $authUser !== null && (int) $authUser->id === (int) $user->id;
 
@@ -576,6 +581,7 @@ class CartController extends Controller
             return ResponseHelper::success([
                 'user' => $user,
                 'cart_items' => $cartItems,
+                'latest_audit_request' => $latestAudit?->toBuyNowContext(),
                 'requires_login' => false,
                 'auto_authenticated' => $issuedToken !== null,
                 'access_token' => $issuedToken,

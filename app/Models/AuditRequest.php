@@ -72,4 +72,62 @@ class AuditRequest extends Model
     {
         return $this->belongsTo(User::class, 'approved_by');
     }
+
+    /**
+     * Map audit fields to Buy Now customer_type (residential|sme|commercial).
+     */
+    public function resolvedCustomerType(): ?string
+    {
+        $raw = strtolower(trim((string) ($this->customer_type ?? '')));
+        if (in_array($raw, ['residential', 'sme', 'commercial'], true)) {
+            return $raw;
+        }
+
+        $auditType = strtolower(trim((string) ($this->audit_type ?? '')));
+        if ($auditType === 'commercial') {
+            return 'commercial';
+        }
+        if ($auditType === 'home-office' || $auditType === 'home' || $auditType === 'office') {
+            return 'residential';
+        }
+
+        return $raw !== '' ? $raw : null;
+    }
+
+    /**
+     * Compact payload for cart-access / Buy Now preload / admin order detail.
+     *
+     * @return array<string, mixed>
+     */
+    public function toBuyNowContext(): array
+    {
+        return [
+            'id' => $this->id,
+            'customer_type' => $this->resolvedCustomerType(),
+            'audit_type' => $this->audit_type,
+            'audit_subtype' => $this->audit_subtype,
+            'product_category' => $this->product_category,
+            'company_name' => $this->company_name,
+            'property_address' => $this->property_address,
+            'property_state' => $this->property_state,
+            'property_floors' => $this->property_floors,
+            'property_rooms' => $this->property_rooms,
+            'is_gated_estate' => $this->is_gated_estate,
+            'estate_name' => $this->estate_name,
+            'estate_address' => $this->estate_address,
+            'preferred_audit_date' => optional($this->preferred_audit_date)?->format('Y-m-d'),
+            'preferred_audit_time' => $this->preferred_audit_time,
+            'contact_name' => $this->contact_name,
+            'contact_phone' => $this->contact_phone,
+            'status' => $this->status,
+        ];
+    }
+
+    public static function latestForUser(int $userId): ?self
+    {
+        return static::query()
+            ->where('user_id', $userId)
+            ->orderByDesc('id')
+            ->first();
+    }
 }

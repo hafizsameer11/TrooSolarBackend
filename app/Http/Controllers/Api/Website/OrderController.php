@@ -961,7 +961,25 @@ class OrderController extends Controller
             'is_gated_estate' => Schema::hasColumn('orders', 'is_gated_estate') ? $order->is_gated_estate : null,
             'estate_name' => Schema::hasColumn('orders', 'estate_name') ? ($order->estate_name ?? null) : null,
             'estate_address' => Schema::hasColumn('orders', 'estate_address') ? ($order->estate_address ?? null) : null,
+            'audit_request_id' => Schema::hasColumn('orders', 'audit_request_id') ? ($order->audit_request_id ?? null) : null,
         ];
+
+        // Prefer linked / latest audit for customer type when presenting Buy Now details
+        $auditContext = null;
+        if ($order->relationLoaded('auditRequest') && $order->auditRequest) {
+            $auditContext = $order->auditRequest;
+        } elseif (!empty($order->audit_request_id)) {
+            $auditContext = AuditRequest::query()->find($order->audit_request_id);
+        } elseif (!empty($order->user_id)) {
+            $auditContext = AuditRequest::latestForUser((int) $order->user_id);
+        }
+        if ($auditContext) {
+            $baseData['audit_request'] = $auditContext->toBuyNowContext();
+            $auditCustomerType = $auditContext->resolvedCustomerType();
+            if ($auditCustomerType) {
+                $baseData['customer_type'] = $auditCustomerType;
+            }
+        }
 
         if (Schema::hasColumn('orders', 'installation_requested_date')) {
             $baseData['installation_requested_date'] = $order->installation_requested_date
@@ -1315,6 +1333,52 @@ class OrderController extends Controller
             if (!$isAuditOrder && empty($data['installer_choice'])) {
                 $data['installer_choice'] = 'troosolar';
             }
+
+            // Prefer audit request context for customer type / property when available
+            // (custom-order Buy Now links skip the customer-type step).
+            if (!$isAuditOrder) {
+                $auditForCheckout = null;
+                if (!empty($data['audit_request_id'])) {
+                    $auditForCheckout = AuditRequest::query()
+                        ->where('id', (int) $data['audit_request_id'])
+                        ->where('user_id', Auth::id())
+                        ->first();
+                }
+                if (!$auditForCheckout) {
+                    $auditForCheckout = AuditRequest::latestForUser((int) Auth::id());
+                }
+                if ($auditForCheckout) {
+                    $data['audit_request_id'] = $auditForCheckout->id;
+                    $auditCustomerType = $auditForCheckout->resolvedCustomerType();
+                    if ($auditCustomerType) {
+                        $data['customer_type'] = $auditCustomerType;
+                    }
+                    if (empty($data['product_category']) && !empty($auditForCheckout->product_category)) {
+                        $data['product_category'] = $auditForCheckout->product_category;
+                    }
+                    foreach ([
+                        'property_state' => 'property_state',
+                        'property_address' => 'property_address',
+                        'property_floors' => 'property_floors',
+                        'property_rooms' => 'property_rooms',
+                        'estate_name' => 'estate_name',
+                        'estate_address' => 'estate_address',
+                        'contact_name' => 'contact_name',
+                        'contact_phone' => 'contact_phone',
+                    ] as $dataKey => $auditKey) {
+                        $current = $data[$dataKey] ?? null;
+                        $fromAudit = $auditForCheckout->{$auditKey} ?? null;
+                        if (($current === null || $current === '') && $fromAudit !== null && $fromAudit !== '') {
+                            $data[$dataKey] = $fromAudit;
+                        }
+                    }
+                    if (!array_key_exists('is_gated_estate', $data) || $data['is_gated_estate'] === null) {
+                        if ($auditForCheckout->is_gated_estate !== null) {
+                            $data['is_gated_estate'] = (bool) $auditForCheckout->is_gated_estate;
+                        }
+                    }
+                }
+            }
             
             // For audit orders, skip installer_choice requirement
             if ($isAuditOrder) {
@@ -1660,6 +1724,14 @@ class OrderController extends Controller
                 }
             }
 
+            if (
+                !$isAuditOrder
+                && !empty($data['audit_request_id'])
+                && \Illuminate\Support\Facades\Schema::hasColumn('orders', 'audit_request_id')
+            ) {
+                $orderData['audit_request_id'] = (int) $data['audit_request_id'];
+            }
+
             // Persist installation / delivery site from Buy Now flow (dashboard sends property_* + contact_*)
             $propAddr = trim((string) ($data['property_address'] ?? ''));
             $propState = trim((string) ($data['property_state'] ?? ''));
@@ -1798,7 +1870,14 @@ class OrderController extends Controller
     public function getBuyNowOrder($id)
     {
         try {
-            $order = Order::with(['items.itemable', 'deliveryAddress', 'bundle', 'product', 'user:id,first_name,sur_name,email,phone'])
+            $order = Order::with([
+                'items.itemable',
+                'deliveryAddress',
+                'bundle',
+                'product',
+                'user:id,first_name,sur_name,email,phone',
+                'auditRequest',
+            ])
                 ->where('order_type', 'buy_now')
                 ->findOrFail($id);
 
@@ -3391,6 +3470,7 @@ class OrderController extends Controller
                 'deliveryAddress',
                 'items.itemable',
                 'loanApplication',
+                'auditRequest',
             ])
                 ->where('id', $id);
 
@@ -3538,6 +3618,19 @@ class OrderController extends Controller
                     : (string) $order->installation_requested_date;
             }
 
+            $auditContext = null;
+            if ($order->relationLoaded('auditRequest') && $order->auditRequest) {
+                $auditContext = $order->auditRequest;
+            } elseif (!empty($order->audit_request_id)) {
+                $auditContext = AuditRequest::query()->find($order->audit_request_id);
+            } elseif (!empty($order->user_id)) {
+                $auditContext = AuditRequest::latestForUser((int) $order->user_id);
+            }
+            $customerType = Schema::hasColumn('orders', 'customer_type') ? ($order->customer_type ?? null) : null;
+            if ($auditContext && $auditContext->resolvedCustomerType()) {
+                $customerType = $auditContext->resolvedCustomerType();
+            }
+
             return ResponseHelper::success([
                 'order_id' => $order->id,
                 'order_number' => $order->order_number ?? null,
@@ -3555,8 +3648,10 @@ class OrderController extends Controller
                 'vat_amount' => Schema::hasColumn('orders', 'vat_amount') ? (float) ($order->vat_amount ?? 0) : null,
                 'bundle_title' => $resolvedBundle?->title ?? $order->bundle?->title,
                 'product_title' => $resolvedProduct?->title ?? $order->product?->title,
-                'product_category' => $order->loanApplication?->product_category,
-                'customer_type' => Schema::hasColumn('orders', 'customer_type') ? ($order->customer_type ?? null) : null,
+                'product_category' => $order->loanApplication?->product_category
+                    ?? ($auditContext?->product_category),
+                'customer_type' => $customerType,
+                'audit_request' => $auditContext?->toBuyNowContext(),
                 'installer_choice' => Schema::hasColumn('orders', 'installer_choice') ? ($order->installer_choice ?? null) : null,
                 'property_floors' => Schema::hasColumn('orders', 'property_floors') ? $order->property_floors : null,
                 'property_rooms' => Schema::hasColumn('orders', 'property_rooms') ? $order->property_rooms : null,
