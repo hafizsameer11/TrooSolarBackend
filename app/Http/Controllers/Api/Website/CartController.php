@@ -567,8 +567,6 @@ class CartController extends Controller
                 ->where('user_id', $user->id)
                 ->get();
 
-            $latestAudit = AuditRequest::latestForUser((int) $user->id);
-
             $authUser = $this->resolveBearerUser($request);
             $isOwner = $authUser !== null && (int) $authUser->id === (int) $user->id;
 
@@ -581,7 +579,6 @@ class CartController extends Controller
             return ResponseHelper::success([
                 'user' => $user,
                 'cart_items' => $cartItems,
-                'latest_audit_request' => $latestAudit?->toBuyNowContext(),
                 'requires_login' => false,
                 'auto_authenticated' => $issuedToken !== null,
                 'access_token' => $issuedToken,

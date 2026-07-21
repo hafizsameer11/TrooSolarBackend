@@ -964,20 +964,20 @@ class OrderController extends Controller
             'audit_request_id' => Schema::hasColumn('orders', 'audit_request_id') ? ($order->audit_request_id ?? null) : null,
         ];
 
-        // Prefer linked / latest audit for customer type when presenting Buy Now details
-        $auditContext = null;
-        if ($order->relationLoaded('auditRequest') && $order->auditRequest) {
-            $auditContext = $order->auditRequest;
-        } elseif (!empty($order->audit_request_id)) {
-            $auditContext = AuditRequest::query()->find($order->audit_request_id);
-        } elseif (!empty($order->user_id)) {
-            $auditContext = AuditRequest::latestForUser((int) $order->user_id);
-        }
-        if ($auditContext) {
-            $baseData['audit_request'] = $auditContext->toBuyNowContext();
-            $auditCustomerType = $auditContext->resolvedCustomerType();
-            if ($auditCustomerType) {
-                $baseData['customer_type'] = $auditCustomerType;
+        // Only for orders linked to an audit (custom-order checkout) — do not override normal Buy Now.
+        if (!empty($order->audit_request_id)) {
+            $auditContext = null;
+            if ($order->relationLoaded('auditRequest') && $order->auditRequest) {
+                $auditContext = $order->auditRequest;
+            } else {
+                $auditContext = AuditRequest::query()->find($order->audit_request_id);
+            }
+            if ($auditContext) {
+                $baseData['audit_request'] = $auditContext->toBuyNowContext();
+                $auditCustomerType = $auditContext->resolvedCustomerType();
+                if ($auditCustomerType) {
+                    $baseData['customer_type'] = $auditCustomerType;
+                }
             }
         }
 
@@ -1334,21 +1334,15 @@ class OrderController extends Controller
                 $data['installer_choice'] = 'troosolar';
             }
 
-            // Prefer audit request context for customer type / property when available
-            // (custom-order Buy Now links skip the customer-type step).
-            if (!$isAuditOrder) {
-                $auditForCheckout = null;
-                if (!empty($data['audit_request_id'])) {
-                    $auditForCheckout = AuditRequest::query()
-                        ->where('id', (int) $data['audit_request_id'])
-                        ->where('user_id', Auth::id())
-                        ->first();
-                }
-                if (!$auditForCheckout) {
-                    $auditForCheckout = AuditRequest::latestForUser((int) Auth::id());
-                }
+            // Custom-order email links only: when the client sends audit_request_id,
+            // fill customer type / empty property fields from that audit. Do not apply
+            // this to the normal Buy Now flow.
+            if (!$isAuditOrder && !empty($data['audit_request_id'])) {
+                $auditForCheckout = AuditRequest::query()
+                    ->where('id', (int) $data['audit_request_id'])
+                    ->where('user_id', Auth::id())
+                    ->first();
                 if ($auditForCheckout) {
-                    $data['audit_request_id'] = $auditForCheckout->id;
                     $auditCustomerType = $auditForCheckout->resolvedCustomerType();
                     if ($auditCustomerType) {
                         $data['customer_type'] = $auditCustomerType;
@@ -3619,12 +3613,12 @@ class OrderController extends Controller
             }
 
             $auditContext = null;
-            if ($order->relationLoaded('auditRequest') && $order->auditRequest) {
-                $auditContext = $order->auditRequest;
-            } elseif (!empty($order->audit_request_id)) {
-                $auditContext = AuditRequest::query()->find($order->audit_request_id);
-            } elseif (!empty($order->user_id)) {
-                $auditContext = AuditRequest::latestForUser((int) $order->user_id);
+            if (!empty($order->audit_request_id)) {
+                if ($order->relationLoaded('auditRequest') && $order->auditRequest) {
+                    $auditContext = $order->auditRequest;
+                } else {
+                    $auditContext = AuditRequest::query()->find($order->audit_request_id);
+                }
             }
             $customerType = Schema::hasColumn('orders', 'customer_type') ? ($order->customer_type ?? null) : null;
             if ($auditContext && $auditContext->resolvedCustomerType()) {
