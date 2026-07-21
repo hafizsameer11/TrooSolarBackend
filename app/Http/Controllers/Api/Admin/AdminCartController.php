@@ -41,6 +41,7 @@ class AdminCartController extends Controller
         try {
             $data = $request->validate([
                 'user_id' => 'required|exists:users,id',
+                'audit_request_id' => 'required|exists:audit_requests,id',
                 'order_type' => 'required|in:buy_now,bnpl',
                 'items' => 'nullable|array',
                 'items.*.type' => 'required_with:items|in:product,bundle',
@@ -66,6 +67,15 @@ class AdminCartController extends Controller
             $userId = $data['user_id'];
             $orderType = $data['order_type'];
             $user = User::findOrFail($userId);
+
+            $auditRequest = AuditRequest::where('id', (int) $data['audit_request_id'])
+                ->where('user_id', $userId)
+                ->first();
+            if (!$auditRequest) {
+                throw ValidationException::withMessages([
+                    'audit_request_id' => ['Selected audit request does not belong to this customer.'],
+                ]);
+            }
 
             // Each custom order gets its own token + item snapshot. Do not touch the
             // user's live shop cart — successive emails must not accumulate items.
@@ -126,6 +136,7 @@ class AdminCartController extends Controller
             $token = Str::random(64);
             $link = CustomOrderLink::create([
                 'user_id' => $userId,
+                'audit_request_id' => $auditRequest->id,
                 'token' => $token,
                 'order_type' => $orderType,
                 'items' => $snapshotItems,
@@ -228,7 +239,10 @@ class AdminCartController extends Controller
             $orderType = $request->get('order_type'); // buy_now|bnpl|null
 
             $query = CustomOrderLink::query()
-                ->with(['user:id,first_name,sur_name,email,phone'])
+                ->with([
+                    'user:id,first_name,sur_name,email,phone',
+                    'auditRequest',
+                ])
                 ->orderByDesc('id');
 
             if (in_array($orderType, ['buy_now', 'bnpl'], true)) {
@@ -246,18 +260,9 @@ class AdminCartController extends Controller
             }
 
             $paginator = $query->paginate($perPage);
-            $userIds = $paginator->getCollection()->pluck('user_id')->unique()->values();
-            $latestAudits = AuditRequest::whereIn('user_id', $userIds)
-                ->orderByDesc('id')
-                ->get()
-                ->groupBy('user_id')
-                ->map(fn ($rows) => $rows->first());
 
-            $formatted = $paginator->getCollection()->map(function (CustomOrderLink $link) use ($latestAudits) {
-                return $this->formatCustomOrderLinkForAdmin(
-                    $link,
-                    $latestAudits->get($link->user_id)
-                );
+            $formatted = $paginator->getCollection()->map(function (CustomOrderLink $link) {
+                return $this->formatCustomOrderLinkForAdmin($link, $link->auditRequest);
             });
 
             return ResponseHelper::success([
@@ -278,17 +283,19 @@ class AdminCartController extends Controller
     }
 
     /**
-     * Show one custom-order link with items + latest audit for the user.
+     * Show one custom-order link with items + linked audit for the order.
      * GET /api/admin/cart/custom-orders/{id}
      */
     public function showCustomOrder($id)
     {
         try {
-            $link = CustomOrderLink::with(['user:id,first_name,sur_name,email,phone'])->findOrFail($id);
-            $latestAudit = AuditRequest::where('user_id', $link->user_id)->orderByDesc('id')->first();
+            $link = CustomOrderLink::with([
+                'user:id,first_name,sur_name,email,phone',
+                'auditRequest',
+            ])->findOrFail($id);
 
             return ResponseHelper::success(
-                $this->formatCustomOrderLinkForAdmin($link, $latestAudit, true),
+                $this->formatCustomOrderLinkForAdmin($link, $link->auditRequest, true),
                 'Custom order retrieved successfully'
             );
         } catch (Exception $e) {
@@ -374,7 +381,7 @@ class AdminCartController extends Controller
      */
     private function formatCustomOrderLinkForAdmin(
         CustomOrderLink $link,
-        ?AuditRequest $latestAudit = null,
+        ?AuditRequest $linkedAudit = null,
         bool $includeItems = false
     ): array {
         $user = $link->user;
@@ -397,6 +404,7 @@ class AdminCartController extends Controller
         $payload = [
             'id' => $link->id,
             'order_type' => $link->order_type,
+            'audit_request_id' => $link->audit_request_id,
             'created_at' => optional($link->created_at)?->format('Y-m-d H:i:s'),
             'item_count' => $itemCount + count($customItems),
             'catalog_item_count' => $itemCount,
@@ -409,8 +417,12 @@ class AdminCartController extends Controller
                 'email' => $user->email,
                 'phone' => $user->phone,
             ] : null,
-            'latest_audit_request' => $latestAudit
-                ? $this->formatLatestAuditForCustomOrder($latestAudit)
+            // Linked audit for THIS custom order (not the user's latest)
+            'audit_request' => $linkedAudit
+                ? $this->formatLatestAuditForCustomOrder($linkedAudit)
+                : null,
+            'latest_audit_request' => $linkedAudit
+                ? $this->formatLatestAuditForCustomOrder($linkedAudit)
                 : null,
         ];
 
@@ -438,26 +450,32 @@ class AdminCartController extends Controller
      */
     private function formatLatestAuditForCustomOrder(AuditRequest $request): array
     {
-        return [
-            'id' => $request->id,
-            'audit_type' => $request->audit_type,
-            'audit_subtype' => $request->audit_subtype,
-            'status' => $request->status,
-            'company_name' => $request->company_name,
-            'property_address' => $request->property_address,
-            'property_state' => $request->property_state,
-            'property_floors' => $request->property_floors,
-            'property_rooms' => $request->property_rooms,
-            'is_gated_estate' => $request->is_gated_estate,
-            'estate_name' => $request->estate_name,
-            'estate_address' => $request->estate_address,
-            'preferred_audit_date' => $request->preferred_audit_date,
-            'preferred_audit_time' => $request->preferred_audit_time,
-            'product_category' => $request->product_category,
-            'created_at' => optional($request->created_at)?->format('Y-m-d H:i:s'),
+        return array_merge($request->toBuyNowContext(), [
             'has_property_details' => !empty($request->property_address),
             'needs_admin_input' => $request->audit_type === 'commercial' && empty($request->property_address),
-        ];
+            'heading' => $this->auditRequestHeading($request),
+        ]);
+    }
+
+    private function auditRequestHeading(AuditRequest $request): string
+    {
+        $type = $request->audit_type === 'commercial'
+            ? 'Commercial / Industrial'
+            : ($request->audit_subtype === 'office'
+                ? 'Office'
+                : ($request->audit_subtype === 'home' ? 'Home' : 'Home / Office'));
+        $status = ucfirst((string) ($request->status ?? 'pending'));
+        $date = optional($request->created_at)?->format('d/m/Y') ?: '—';
+        $customerType = $request->resolvedCustomerType();
+        $parts = ["#{$request->id}", $type, $status, $date];
+        if ($customerType) {
+            $parts[] = ucfirst($customerType);
+        }
+        if (!empty($request->property_state)) {
+            $parts[] = $request->property_state;
+        }
+
+        return implode(' · ', $parts);
     }
 
     /**

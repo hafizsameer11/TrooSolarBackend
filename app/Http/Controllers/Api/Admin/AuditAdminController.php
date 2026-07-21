@@ -439,6 +439,57 @@ class AuditAdminController extends Controller
     }
 
     /**
+     * All audit requests for one customer (picker + history UI).
+     * GET /api/admin/audit/users/{userId}/requests
+     */
+    public function userAuditHistory(Request $request, $userId)
+    {
+        try {
+            $user = User::findOrFail($userId);
+            $rows = AuditRequest::where('user_id', $user->id)
+                ->orderByDesc('id')
+                ->get();
+
+            $formatted = $rows->map(function (AuditRequest $audit) use ($request) {
+                $typeLabel = $audit->audit_type === 'commercial'
+                    ? 'Commercial / Industrial'
+                    : ($audit->audit_subtype === 'office'
+                        ? 'Office'
+                        : ($audit->audit_subtype === 'home' ? 'Home' : 'Home / Office'));
+                $created = optional($audit->created_at)?->format('d/m/Y H:i') ?: '—';
+                $customerType = $audit->resolvedCustomerType();
+
+                return array_merge($audit->toBuyNowContext(), [
+                    'heading' => "#{$audit->id} · {$typeLabel} · " . ucfirst((string) ($audit->status ?? 'pending')) . " · {$created}"
+                        . ($customerType ? ' · ' . ucfirst($customerType) : '')
+                        . (!empty($audit->property_state) ? ' · ' . $audit->property_state : ''),
+                    'type_label' => $typeLabel,
+                    'has_property_details' => !empty($audit->property_address),
+                    'needs_admin_input' => $audit->audit_type === 'commercial' && empty($audit->property_address),
+                    'source' => $audit->source,
+                    'admin_notes' => $audit->admin_notes,
+                    'created_at' => optional($audit->created_at)?->format('Y-m-d H:i:s'),
+                    'updated_at' => optional($audit->updated_at)?->format('Y-m-d H:i:s'),
+                ], $this->formatApprovalPaymentFields($audit), $this->formatCustomerPaymentFields($audit, $request));
+            })->values();
+
+            return ResponseHelper::success([
+                'user' => [
+                    'id' => $user->id,
+                    'name' => trim(($user->first_name ?? '') . ' ' . ($user->sur_name ?? '')),
+                    'email' => $user->email,
+                    'phone' => $user->phone,
+                ],
+                'total' => $formatted->count(),
+                'requests' => $formatted,
+            ], 'User audit history retrieved successfully');
+        } catch (Exception $e) {
+            Log::error('User audit history error: ' . $e->getMessage());
+            return ResponseHelper::error('Failed to retrieve user audit history', 500);
+        }
+    }
+
+    /**
      * Get single audit request details
      * GET /api/admin/audit/requests/{id}
      */

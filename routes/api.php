@@ -493,6 +493,7 @@ Route::post('bundles/{bundle}/update', [BundleController::class, 'update'])
     // ================= AUDIT ADMIN ROUTES =================
     Route::prefix('admin/audit')->group(function () {
         Route::get('/users-with-requests', [\App\Http\Controllers\Api\Admin\AuditAdminController::class, 'getUsersWithAuditRequests']);
+        Route::get('/users/{userId}/requests', [\App\Http\Controllers\Api\Admin\AuditAdminController::class, 'userAuditHistory']);
         Route::get('/requests', [\App\Http\Controllers\Api\Admin\AuditAdminController::class, 'index']);
         Route::get('/requests/{id}', [\App\Http\Controllers\Api\Admin\AuditAdminController::class, 'show']);
         Route::put('/requests/{id}/status', [\App\Http\Controllers\Api\Admin\AuditAdminController::class, 'updateStatus']);

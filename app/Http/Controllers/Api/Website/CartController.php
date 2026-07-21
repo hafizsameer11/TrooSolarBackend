@@ -523,7 +523,7 @@ class CartController extends Controller
     {
         try {
             // Prefer isolated custom-order snapshots (one email = one item set).
-            $customLink = CustomOrderLink::where('token', $token)->first();
+            $customLink = CustomOrderLink::with('auditRequest')->where('token', $token)->first();
             if ($customLink) {
                 $user = User::find($customLink->user_id);
                 if (!$user) {
@@ -531,7 +531,10 @@ class CartController extends Controller
                 }
 
                 $cartItems = $customLink->resolveCartItems();
-                $latestAudit = AuditRequest::latestForUser((int) $user->id);
+                $linkedAudit = $customLink->auditRequest
+                    ?: ($customLink->audit_request_id
+                        ? AuditRequest::query()->find($customLink->audit_request_id)
+                        : null);
 
                 $authUser = $this->resolveBearerUser($request);
                 $isOwner = $authUser !== null && (int) $authUser->id === (int) $user->id;
@@ -546,7 +549,10 @@ class CartController extends Controller
                     'cart_items' => $cartItems->values(),
                     'custom_order_link_id' => $customLink->id,
                     'order_type' => $customLink->order_type,
-                    'latest_audit_request' => $latestAudit?->toBuyNowContext(),
+                    'audit_request_id' => $customLink->audit_request_id,
+                    // Audit selected for this custom order (used by Buy Now details)
+                    'latest_audit_request' => $linkedAudit?->toBuyNowContext(),
+                    'audit_request' => $linkedAudit?->toBuyNowContext(),
                     'requires_login' => false,
                     'auto_authenticated' => $issuedToken !== null,
                     'access_token' => $issuedToken,

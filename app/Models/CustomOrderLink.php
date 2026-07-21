@@ -10,6 +10,7 @@ class CustomOrderLink extends Model
 {
     protected $fillable = [
         'user_id',
+        'audit_request_id',
         'token',
         'order_type',
         'items',
@@ -25,6 +26,11 @@ class CustomOrderLink extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function auditRequest(): BelongsTo
+    {
+        return $this->belongsTo(AuditRequest::class, 'audit_request_id');
     }
 
     /**
