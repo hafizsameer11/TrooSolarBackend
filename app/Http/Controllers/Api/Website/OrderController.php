@@ -86,17 +86,18 @@ class OrderController extends Controller
             }
         }
 
-        // 2) Standalone product catalog price.
+        // 2) Sum of product order lines (multi-product / custom-order Buy Now).
+        // Must beat the single-$product fallback — otherwise Sub-Total only shows the first item.
+        if ($productLinesCatalogSum > 0.005) {
+            return round($productLinesCatalogSum, 2);
+        }
+
+        // 3) Standalone product catalog price (legacy single-product orders).
         if ($product) {
             $productCatalog = $this->resolveCatalogUnitPrice($product);
             if ($productCatalog > 0.005) {
                 return round($productCatalog, 2);
             }
-        }
-
-        // 3) Sum of real product order lines (multi-product Buy Now).
-        if ($productLinesCatalogSum > 0.005) {
-            return round($productLinesCatalogSum, 2);
         }
 
         // 4) Back-calculate from stored after-discount price + configured outright %.
