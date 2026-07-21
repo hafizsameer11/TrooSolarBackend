@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Helpers\ResponseHelper;
 use App\Http\Controllers\Controller;
 use App\Mail\CartLinkEmail;
+use App\Models\AuditRequest;
 use App\Models\CartItem;
 use App\Models\CustomOrderLink;
 use App\Support\FrontendUrl;
@@ -213,6 +214,250 @@ class AdminCartController extends Controller
             ]);
             return ResponseHelper::error('Failed to create custom order: ' . $e->getMessage(), 500);
         }
+    }
+
+    /**
+     * List individual custom-order email links (one row per send).
+     * GET /api/admin/cart/custom-orders
+     */
+    public function listCustomOrders(Request $request)
+    {
+        try {
+            $perPage = max(1, min(100, (int) $request->get('per_page', 15)));
+            $search = trim((string) $request->get('search', ''));
+            $orderType = $request->get('order_type'); // buy_now|bnpl|null
+
+            $query = CustomOrderLink::query()
+                ->with(['user:id,first_name,sur_name,email,phone'])
+                ->orderByDesc('id');
+
+            if (in_array($orderType, ['buy_now', 'bnpl'], true)) {
+                $query->where('order_type', $orderType);
+            }
+
+            if ($search !== '') {
+                $query->whereHas('user', function ($q) use ($search) {
+                    $q->where('email', 'like', "%{$search}%")
+                        ->orWhere('phone', 'like', "%{$search}%")
+                        ->orWhere('first_name', 'like', "%{$search}%")
+                        ->orWhere('sur_name', 'like', "%{$search}%")
+                        ->orWhereRaw("CONCAT(COALESCE(first_name,''),' ',COALESCE(sur_name,'')) like ?", ["%{$search}%"]);
+                });
+            }
+
+            $paginator = $query->paginate($perPage);
+            $userIds = $paginator->getCollection()->pluck('user_id')->unique()->values();
+            $latestAudits = AuditRequest::whereIn('user_id', $userIds)
+                ->orderByDesc('id')
+                ->get()
+                ->groupBy('user_id')
+                ->map(fn ($rows) => $rows->first());
+
+            $formatted = $paginator->getCollection()->map(function (CustomOrderLink $link) use ($latestAudits) {
+                return $this->formatCustomOrderLinkForAdmin(
+                    $link,
+                    $latestAudits->get($link->user_id)
+                );
+            });
+
+            return ResponseHelper::success([
+                'data' => $formatted->values(),
+                'pagination' => [
+                    'current_page' => $paginator->currentPage(),
+                    'last_page' => $paginator->lastPage(),
+                    'per_page' => $paginator->perPage(),
+                    'total' => $paginator->total(),
+                    'from' => $paginator->firstItem(),
+                    'to' => $paginator->lastItem(),
+                ],
+            ], 'Custom orders retrieved successfully');
+        } catch (Exception $e) {
+            Log::error('Error listing custom orders: ' . $e->getMessage());
+            return ResponseHelper::error('Failed to retrieve custom orders: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Show one custom-order link with items + latest audit for the user.
+     * GET /api/admin/cart/custom-orders/{id}
+     */
+    public function showCustomOrder($id)
+    {
+        try {
+            $link = CustomOrderLink::with(['user:id,first_name,sur_name,email,phone'])->findOrFail($id);
+            $latestAudit = AuditRequest::where('user_id', $link->user_id)->orderByDesc('id')->first();
+
+            return ResponseHelper::success(
+                $this->formatCustomOrderLinkForAdmin($link, $latestAudit, true),
+                'Custom order retrieved successfully'
+            );
+        } catch (Exception $e) {
+            Log::error('Error showing custom order: ' . $e->getMessage());
+            return ResponseHelper::error('Failed to retrieve custom order: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Resend email for a specific custom-order link.
+     * POST /api/admin/cart/custom-orders/{id}/resend
+     */
+    public function resendCustomOrderEmail(Request $request, $id)
+    {
+        try {
+            $data = $request->validate([
+                'order_type' => 'nullable|in:buy_now,bnpl',
+                'email_message' => 'nullable|string|max:10000',
+            ]);
+
+            $link = CustomOrderLink::with('user')->findOrFail($id);
+            $user = $link->user;
+            if (!$user) {
+                return ResponseHelper::error('User not found for this custom order', 404);
+            }
+
+            $orderType = $data['order_type'] ?? $link->order_type;
+            $token = Str::random(64);
+            $link->update([
+                'token' => $token,
+                'order_type' => $orderType,
+            ]);
+
+            $cartItems = $link->resolveCartItems();
+            $customItems = is_array($link->custom_items) ? $link->custom_items : [];
+            $cartSubtotal = $cartItems->sum(fn ($row) => (float) ($row->subtotal ?? 0));
+            $customSubtotal = collect($customItems)->reduce(function ($carry, $row) {
+                $price = (float) ($row['price'] ?? 0);
+                $qty = max(1, (int) ($row['quantity'] ?? 1));
+
+                return $carry + ($price * $qty);
+            }, 0.0);
+            $summaryTotal = round($cartSubtotal + $customSubtotal, 2);
+            $cartLink = $this->buildDashboardCustomOrderUrl($token, $orderType);
+
+            $mailResult = $this->sendCartLinkEmailToUser(
+                $user,
+                $cartItems,
+                $cartLink,
+                $orderType,
+                $data['email_message'] ?? null,
+                $summaryTotal,
+                $customItems
+            );
+
+            if (!$mailResult['sent']) {
+                return ResponseHelper::error(
+                    'Failed to send email: ' . ($mailResult['error'] ?? 'Unknown mail error'),
+                    500
+                );
+            }
+
+            return ResponseHelper::success([
+                'email' => $user->email,
+                'cart_link' => $cartLink,
+                'custom_order_link_id' => $link->id,
+                'email_sent' => true,
+            ], 'Custom order link email sent successfully');
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (Exception $e) {
+            Log::error('Error resending custom order email: ' . $e->getMessage());
+            return ResponseHelper::error('Failed to send email: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formatCustomOrderLinkForAdmin(
+        CustomOrderLink $link,
+        ?AuditRequest $latestAudit = null,
+        bool $includeItems = false
+    ): array {
+        $user = $link->user;
+        $items = $includeItems ? $link->resolveCartItems() : collect($link->items ?? []);
+        $itemCount = $includeItems
+            ? $items->count()
+            : count($link->items ?? []);
+        $catalogTotal = $includeItems
+            ? (float) $items->sum(fn ($row) => (float) ($row->subtotal ?? 0))
+            : (float) collect($link->items ?? [])->sum(fn ($row) => (float) ($row['subtotal'] ?? 0));
+        $customItems = is_array($link->custom_items) ? $link->custom_items : [];
+        $customTotal = (float) collect($customItems)->reduce(function ($carry, $row) {
+            $price = (float) ($row['price'] ?? 0);
+            $qty = max(1, (int) ($row['quantity'] ?? 1));
+
+            return $carry + ($price * $qty);
+        }, 0.0);
+        $totalAmount = round($catalogTotal + $customTotal, 2);
+
+        $payload = [
+            'id' => $link->id,
+            'order_type' => $link->order_type,
+            'created_at' => optional($link->created_at)?->format('Y-m-d H:i:s'),
+            'item_count' => $itemCount + count($customItems),
+            'catalog_item_count' => $itemCount,
+            'custom_item_count' => count($customItems),
+            'total_amount' => $totalAmount,
+            'cart_link' => $this->buildDashboardCustomOrderUrl($link->token, $link->order_type),
+            'user' => $user ? [
+                'id' => $user->id,
+                'name' => trim(($user->first_name ?? '') . ' ' . ($user->sur_name ?? '')),
+                'email' => $user->email,
+                'phone' => $user->phone,
+            ] : null,
+            'latest_audit_request' => $latestAudit
+                ? $this->formatLatestAuditForCustomOrder($latestAudit)
+                : null,
+        ];
+
+        if ($includeItems) {
+            $payload['cart_items'] = $items->map(function ($item) {
+                return [
+                    'id' => $item->id,
+                    'type' => $item->type,
+                    'itemable_id' => $item->itemable_id,
+                    'quantity' => $item->quantity,
+                    'unit_price' => $item->unit_price,
+                    'subtotal' => $item->subtotal,
+                    'itemable' => $item->itemable,
+                ];
+            })->values();
+            $payload['custom_items'] = $customItems;
+            $payload['total_amount'] = $totalAmount;
+        }
+
+        return $payload;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formatLatestAuditForCustomOrder(AuditRequest $request): array
+    {
+        return [
+            'id' => $request->id,
+            'audit_type' => $request->audit_type,
+            'audit_subtype' => $request->audit_subtype,
+            'status' => $request->status,
+            'company_name' => $request->company_name,
+            'property_address' => $request->property_address,
+            'property_state' => $request->property_state,
+            'property_floors' => $request->property_floors,
+            'property_rooms' => $request->property_rooms,
+            'is_gated_estate' => $request->is_gated_estate,
+            'estate_name' => $request->estate_name,
+            'estate_address' => $request->estate_address,
+            'preferred_audit_date' => $request->preferred_audit_date,
+            'preferred_audit_time' => $request->preferred_audit_time,
+            'product_category' => $request->product_category,
+            'created_at' => optional($request->created_at)?->format('Y-m-d H:i:s'),
+            'has_property_details' => !empty($request->property_address),
+            'needs_admin_input' => $request->audit_type === 'commercial' && empty($request->property_address),
+        ];
     }
 
     /**

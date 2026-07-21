@@ -537,6 +537,9 @@ Route::post('bundles/{bundle}/update', [BundleController::class, 'update'])
     // ================= ADMIN CUSTOM ORDER ROUTES =================
     Route::prefix('admin/cart')->group(function () {
         Route::get('/users-with-carts', [\App\Http\Controllers\Api\Admin\AdminCartController::class, 'getUsersWithCarts']);
+        Route::get('/custom-orders', [\App\Http\Controllers\Api\Admin\AdminCartController::class, 'listCustomOrders']);
+        Route::get('/custom-orders/{id}', [\App\Http\Controllers\Api\Admin\AdminCartController::class, 'showCustomOrder']);
+        Route::post('/custom-orders/{id}/resend', [\App\Http\Controllers\Api\Admin\AdminCartController::class, 'resendCustomOrderEmail']);
         Route::post('/create-custom-order', [\App\Http\Controllers\Api\Admin\AdminCartController::class, 'createCustomOrder']);
         Route::get('/products', [\App\Http\Controllers\Api\Admin\AdminCartController::class, 'getProducts']);
         Route::get('/user/{userId}', [\App\Http\Controllers\Api\Admin\AdminCartController::class, 'getUserCart']);
