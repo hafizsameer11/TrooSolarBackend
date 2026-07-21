@@ -6,6 +6,7 @@ use App\Helpers\ResponseHelper;
 use App\Http\Controllers\Controller;
 use App\Mail\CartLinkEmail;
 use App\Models\CartItem;
+use App\Models\CustomOrderLink;
 use App\Support\FrontendUrl;
 use App\Models\Product;
 use App\Models\Bundles;
@@ -65,83 +66,81 @@ class AdminCartController extends Controller
             $orderType = $data['order_type'];
             $user = User::findOrFail($userId);
 
-            // Build this custom order in isolation: replace the user's cart so the
-            // email/checkout link only contains the items for THIS order (not prior ones).
-            $cartItems = [];
+            // Each custom order gets its own token + item snapshot. Do not touch the
+            // user's live shop cart — successive emails must not accumulate items.
+            $snapshotItems = [];
             $errors = [];
-            $token = null;
 
-            DB::transaction(function () use (
-                $items,
-                $userId,
-                $user,
-                &$cartItems,
-                &$errors,
-                &$token
-            ) {
-                CartItem::where('user_id', $userId)->delete();
+            foreach ($items as $item) {
+                $type = $item['type'];
+                $itemId = (int) $item['id'];
+                $quantity = max(1, (int) ($item['quantity'] ?? 1));
 
-                foreach ($items as $item) {
-                    $type = $item['type'];
-                    $itemId = $item['id'];
-                    $quantity = $item['quantity'] ?? 1;
-
-                    if ($type === 'product') {
-                        $product = Product::find($itemId);
-                        if (!$product) {
-                            $errors[] = "Product ID {$itemId} not found";
-                            continue;
-                        }
-                        $price = $product->discount_price ?? $product->price ?? 0;
-
-                        $cartItem = CartItem::create([
-                            'user_id' => $userId,
-                            'itemable_type' => Product::class,
-                            'itemable_id' => $itemId,
-                            'quantity' => $quantity,
-                            'unit_price' => $price,
-                            'subtotal' => $price * $quantity,
-                        ]);
-                        $cartItems[] = $cartItem;
-                    } elseif ($type === 'bundle') {
-                        $bundle = Bundles::find($itemId);
-                        if (!$bundle) {
-                            $errors[] = "Bundle ID {$itemId} not found";
-                            continue;
-                        }
-                        $price = $bundle->discount_price ?? $bundle->total_price ?? 0;
-
-                        $cartItem = CartItem::create([
-                            'user_id' => $userId,
-                            'itemable_type' => Bundles::class,
-                            'itemable_id' => $itemId,
-                            'quantity' => $quantity,
-                            'unit_price' => $price,
-                            'subtotal' => $price * $quantity,
-                        ]);
-                        $cartItems[] = $cartItem;
+                if ($type === 'product') {
+                    $product = Product::find($itemId);
+                    if (!$product) {
+                        $errors[] = "Product ID {$itemId} not found";
+                        continue;
                     }
+                    $price = (float) ($product->discount_price ?? $product->price ?? 0);
+                    $snapshotItems[] = [
+                        'type' => 'product',
+                        'id' => $itemId,
+                        'quantity' => $quantity,
+                        'unit_price' => $price,
+                        'subtotal' => round($price * $quantity, 2),
+                    ];
+                } elseif ($type === 'bundle') {
+                    $bundle = Bundles::find($itemId);
+                    if (!$bundle) {
+                        $errors[] = "Bundle ID {$itemId} not found";
+                        continue;
+                    }
+                    $price = (float) ($bundle->discount_price ?? $bundle->total_price ?? 0);
+                    $snapshotItems[] = [
+                        'type' => 'bundle',
+                        'id' => $itemId,
+                        'quantity' => $quantity,
+                        'unit_price' => $price,
+                        'subtotal' => round($price * $quantity, 2),
+                    ];
                 }
+            }
 
-                if (!empty($errors)) {
-                    throw ValidationException::withMessages([
-                        'items' => ['Some items could not be added: ' . implode(', ', $errors)],
-                    ]);
-                }
+            if (!empty($errors)) {
+                throw ValidationException::withMessages([
+                    'items' => ['Some items could not be added: ' . implode(', ', $errors)],
+                ]);
+            }
 
-                // New token invalidates older custom-order email links for this user
-                $token = Str::random(64);
-                $user->update(['cart_access_token' => $token]);
-            });
+            $normalizedCustomItems = collect($customItems)->map(function ($row) {
+                return [
+                    'name' => trim((string) ($row['name'] ?? '')),
+                    'description' => trim((string) ($row['description'] ?? '')),
+                    'price' => (float) ($row['price'] ?? 0),
+                    'quantity' => max(1, (int) ($row['quantity'] ?? 1)),
+                ];
+            })->values()->all();
+
+            $token = Str::random(64);
+            $link = CustomOrderLink::create([
+                'user_id' => $userId,
+                'token' => $token,
+                'order_type' => $orderType,
+                'items' => $snapshotItems,
+                'custom_items' => $normalizedCustomItems ?: null,
+                'created_by' => Auth::id(),
+            ]);
+
+            $cartItems = $link->resolveCartItems();
 
             $emailMessage = $data['email_message'] ?? null;
-            if (count($customItems) > 0) {
-                $customBlock = collect($customItems)->map(function ($row) {
-                    $name = trim((string) ($row['name'] ?? ''));
-                    $desc = trim((string) ($row['description'] ?? ''));
-                    $price = (float) ($row['price'] ?? 0);
-                    $qty = (int) ($row['quantity'] ?? 1);
-                    $qty = $qty < 1 ? 1 : $qty;
+            if (count($normalizedCustomItems) > 0) {
+                $customBlock = collect($normalizedCustomItems)->map(function ($row) {
+                    $name = $row['name'];
+                    $desc = $row['description'];
+                    $price = $row['price'];
+                    $qty = $row['quantity'];
                     $line = "\n\n--- Custom Product/Service ---\n{$name}";
                     if ($desc !== '') {
                         $line .= "\nDescription: {$desc}";
@@ -154,12 +153,9 @@ class AdminCartController extends Controller
                 $emailMessage = trim((string) $emailMessage).$customBlock;
             }
 
-            $cartSubtotal = collect($cartItems)->sum(fn ($row) => (float) ($row->subtotal ?? 0));
-            $customSubtotal = collect($customItems)->reduce(function ($carry, $row) {
-                $price = (float) ($row['price'] ?? 0);
-                $qty = max(1, (int) ($row['quantity'] ?? 1));
-
-                return $carry + ($price * $qty);
+            $cartSubtotal = $cartItems->sum(fn ($row) => (float) ($row->subtotal ?? 0));
+            $customSubtotal = collect($normalizedCustomItems)->reduce(function ($carry, $row) {
+                return $carry + ((float) $row['price'] * (int) $row['quantity']);
             }, 0.0);
             $summaryTotal = round($cartSubtotal + $customSubtotal, 2);
             $cartLink = $this->buildDashboardCustomOrderUrl($token, $orderType);
@@ -175,7 +171,7 @@ class AdminCartController extends Controller
                     $orderType,
                     $emailMessage,
                     $summaryTotal,
-                    $customItems
+                    $normalizedCustomItems
                 );
                 $emailSent = $mailResult['sent'];
                 $emailError = $mailResult['error'];
@@ -186,11 +182,12 @@ class AdminCartController extends Controller
                 'user_name' => $user->first_name . ' ' . $user->sur_name,
                 'user_email' => $user->email,
                 'order_type' => $orderType,
-                'items_added' => count($cartItems),
-                'cart_items' => collect($cartItems)->map(function ($item) {
+                'custom_order_link_id' => $link->id,
+                'items_added' => $cartItems->count(),
+                'cart_items' => $cartItems->map(function ($item) {
                     return [
                         'id' => $item->id,
-                        'type' => class_basename($item->itemable_type),
+                        'type' => $item->type,
                         'quantity' => $item->quantity,
                         'unit_price' => $item->unit_price,
                         'subtotal' => $item->subtotal,
@@ -200,7 +197,7 @@ class AdminCartController extends Controller
                 'email_sent' => $emailSent,
                 'email_error' => $emailError,
             ], $emailSent || !$sendEmail
-                ? 'Custom order created and user cart replaced successfully'
+                ? 'Custom order created successfully'
                 : 'Custom order created but the notification email could not be sent');
 
         } catch (ValidationException $e) {
@@ -421,12 +418,14 @@ class AdminCartController extends Controller
                 ->get()
                 ->groupBy('user_id');
 
-            // Batch load users for cart_access_token check
-            $usersWithTokens = User::whereIn('id', $userIds)
-                ->pluck('cart_access_token', 'id');
+            // Batch load custom-order link tokens (per-order email links)
+            $usersWithCustomOrderLinks = CustomOrderLink::whereIn('user_id', $userIds)
+                ->pluck('user_id')
+                ->unique()
+                ->flip();
 
             // Format response with cart details
-            $formattedData = $users->getCollection()->map(function ($user) use ($allCartItems, $usersWithTokens) {
+            $formattedData = $users->getCollection()->map(function ($user) use ($allCartItems, $usersWithCustomOrderLinks) {
                 // Get cart items for this user
                 $cartItems = $allCartItems->get($user->id, collect());
 
@@ -459,7 +458,7 @@ class AdminCartController extends Controller
                     'last_cart_update' => $user->last_cart_update ? date('Y-m-d H:i:s', strtotime($user->last_cart_update)) : null,
                     'user_created_at' => $user->created_at ? $user->created_at->format('Y-m-d H:i:s') : null,
                     'cart_items' => $items,
-                    'has_cart_access_token' => !empty($usersWithTokens[$user->id]),
+                    'has_cart_access_token' => isset($usersWithCustomOrderLinks[$user->id]) || !empty($user->cart_access_token),
                 ];
             });
 
@@ -496,29 +495,62 @@ class AdminCartController extends Controller
             ]);
 
             $user = User::findOrFail($userId);
-            $cartItems = CartItem::with('itemable')
-                ->where('user_id', $userId)
-                ->get();
 
-            if ($cartItems->isEmpty()) {
-                return ResponseHelper::error('User cart is empty', 400);
+            // Prefer the latest isolated custom-order link (not the live shop cart).
+            $link = CustomOrderLink::where('user_id', $userId)
+                ->orderByDesc('id')
+                ->first();
+
+            if ($link) {
+                $token = Str::random(64);
+                $link->update([
+                    'token' => $token,
+                    'order_type' => $data['order_type'],
+                ]);
+                $cartItems = $link->resolveCartItems();
+                $customItems = is_array($link->custom_items) ? $link->custom_items : [];
+                $cartSubtotal = $cartItems->sum(fn ($row) => (float) ($row->subtotal ?? 0));
+                $customSubtotal = collect($customItems)->reduce(function ($carry, $row) {
+                    $price = (float) ($row['price'] ?? 0);
+                    $qty = max(1, (int) ($row['quantity'] ?? 1));
+
+                    return $carry + ($price * $qty);
+                }, 0.0);
+                $summaryTotal = round($cartSubtotal + $customSubtotal, 2);
+                $cartLink = $this->buildDashboardCustomOrderUrl($token, $data['order_type']);
+                $mailResult = $this->sendCartLinkEmailToUser(
+                    $user,
+                    $cartItems,
+                    $cartLink,
+                    $data['order_type'],
+                    $data['email_message'] ?? null,
+                    $summaryTotal,
+                    $customItems
+                );
+            } else {
+                // Legacy fallback: live cart + user cart_access_token
+                $cartItems = CartItem::with('itemable')
+                    ->where('user_id', $userId)
+                    ->get();
+
+                if ($cartItems->isEmpty()) {
+                    return ResponseHelper::error('No custom order link or cart items found for this user', 400);
+                }
+
+                $token = Str::random(64);
+                $user->update(['cart_access_token' => $token]);
+                $cartLink = $this->buildDashboardCustomOrderUrl($token, $data['order_type']);
+                $summaryTotal = round((float) $cartItems->sum('subtotal'), 2);
+                $mailResult = $this->sendCartLinkEmailToUser(
+                    $user,
+                    $cartItems,
+                    $cartLink,
+                    $data['order_type'],
+                    $data['email_message'] ?? null,
+                    $summaryTotal,
+                    []
+                );
             }
-
-            // Generate new token
-            $token = Str::random(64);
-            $user->update(['cart_access_token' => $token]);
-
-            $cartLink = $this->buildDashboardCustomOrderUrl($token, $data['order_type']);
-            $summaryTotal = round((float) $cartItems->sum('subtotal'), 2);
-            $mailResult = $this->sendCartLinkEmailToUser(
-                $user,
-                $cartItems->all(),
-                $cartLink,
-                $data['order_type'],
-                $data['email_message'] ?? null,
-                $summaryTotal,
-                []
-            );
 
             if (!$mailResult['sent']) {
                 return ResponseHelper::error(
@@ -546,7 +578,7 @@ class AdminCartController extends Controller
     }
 
     /**
-     * @param  array<int, CartItem>|\Illuminate\Support\Collection<int, CartItem>  $cartItems
+     * @param  array<int, mixed>|\Illuminate\Support\Collection<int, mixed>  $cartItems
      * @param  array<int, array<string, mixed>>  $customItems
      * @return array{sent: bool, error: ?string}
      */
@@ -564,10 +596,17 @@ class AdminCartController extends Controller
         }
 
         try {
-            $ids = collect($cartItems)->pluck('id')->filter()->values();
-            $itemsForMail = $ids->isNotEmpty()
-                ? CartItem::with('itemable')->whereIn('id', $ids)->get()
-                : collect();
+            $itemsForMail = collect($cartItems)->values();
+
+            // Legacy CartItem models: reload with relations for email display
+            $modelIds = $itemsForMail
+                ->filter(fn ($row) => $row instanceof CartItem)
+                ->pluck('id')
+                ->filter()
+                ->values();
+            if ($modelIds->isNotEmpty() && $itemsForMail->every(fn ($row) => $row instanceof CartItem)) {
+                $itemsForMail = CartItem::with('itemable')->whereIn('id', $modelIds)->get();
+            }
 
             Mail::to($user->email)->send(new CartLinkEmail(
                 $user,

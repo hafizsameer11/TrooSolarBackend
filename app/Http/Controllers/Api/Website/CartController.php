@@ -15,6 +15,7 @@ use App\Http\Requests\StoreCartItemRequest;
 use App\Http\Requests\UpdateCartItemRequest;
 use App\Models\Bundles;
 use App\Models\CheckoutSetting;
+use App\Models\CustomOrderLink;
 use App\Models\ReferralSettings;
 use App\Models\User;
 use App\Support\CheckoutPricing;
@@ -514,12 +515,45 @@ class CartController extends Controller
     }
 
     /**
-     * Access cart via token (from email link)
+     * Access cart / custom-order link via token (from email)
      * GET /api/cart/access/{token}
      */
     public function accessCartViaToken(Request $request, $token)
     {
         try {
+            // Prefer isolated custom-order snapshots (one email = one item set).
+            $customLink = CustomOrderLink::where('token', $token)->first();
+            if ($customLink) {
+                $user = User::find($customLink->user_id);
+                if (!$user) {
+                    return ResponseHelper::error('Invalid or expired cart link', 404);
+                }
+
+                $cartItems = $customLink->resolveCartItems();
+
+                $authUser = $this->resolveBearerUser($request);
+                $isOwner = $authUser !== null && (int) $authUser->id === (int) $user->id;
+
+                $issuedToken = null;
+                if (! $isOwner) {
+                    $issuedToken = $user->createToken('cart-email-link')->plainTextToken;
+                }
+
+                return ResponseHelper::success([
+                    'user' => $user,
+                    'cart_items' => $cartItems->values(),
+                    'custom_order_link_id' => $customLink->id,
+                    'order_type' => $customLink->order_type,
+                    'requires_login' => false,
+                    'auto_authenticated' => $issuedToken !== null,
+                    'access_token' => $issuedToken,
+                    'message' => $issuedToken !== null
+                        ? 'Signed in via cart link'
+                        : 'Cart accessed successfully',
+                ], 'Cart accessed successfully');
+            }
+
+            // Legacy: user.cart_access_token → live shop cart
             $user = User::where('cart_access_token', $token)->first();
 
             if (!$user) {
