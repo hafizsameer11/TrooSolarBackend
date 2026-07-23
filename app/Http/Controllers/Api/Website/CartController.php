@@ -102,7 +102,6 @@ class CartController extends Controller
 
         try {
             $settings = CheckoutSetting::get();
-            $deliveryFee = (int) $settings->delivery_fee;
             $installationText = trim((string) ($settings->installation_description ?? ''));
             if ($installationText === '') {
                 $installationText = (string) config('checkout.installation_text',
@@ -122,9 +121,13 @@ class CartController extends Controller
                 ->orderBy('created_at', 'asc')
                 ->get();
 
+            $emptyCategoryFees = CheckoutPricing::shopCartCategoryFees(collect(), $settings);
+            $deliveryFee = (int) round($emptyCategoryFees['delivery'] ?: (float) ($settings->delivery_fee ?? 0));
+
             if ($rawItems->isEmpty()) {
                 $installationFromProducts = 0;
                 $installationFull = $installationFromProducts + $installationFlatAddon;
+                $inspectionPreview = 0;
                 $inspectionAmount = 0;
                 $insuranceAmount = 0;
                 $vatAmount = CheckoutPricing::vatAmount(0.0, $vatPct);
@@ -148,7 +151,7 @@ class CartController extends Controller
                             'installation_products_total' => 0,
                             'installation_flat_addon' => $installationFlatAddon,
                             'price' => $installationFull,
-                            'inspection_price' => $inspectionAmount,
+                            'inspection_price' => $inspectionPreview,
                             'insurance_fee_percentage' => $insPct,
                             'insurance_price' => $insuranceAmount,
                             'estimated_date' => CheckoutPricing::installationEstimatedDate($settings),
@@ -164,6 +167,7 @@ class CartController extends Controller
                             'installation_flat_addon' => $installationFlatAddon,
                             'installation_total' => $installationFull,
                             'inspection' => $inspectionAmount,
+                            'inspection_preview' => $inspectionPreview,
                             'insurance' => $insuranceAmount,
                             'insurance_fee_percentage' => $insPct,
                             'vat_percentage' => $vatPct,
@@ -218,14 +222,26 @@ class CartController extends Controller
                 ], 422);
             }
 
-            // 3a) Installation + inspection from cart (product install prices / category inspection) + shop addon.
-            $installationFromProducts = CheckoutPricing::installationTotalFromCartItems($rawItems);
-            $installationFull = $installationFromProducts + $installationFlatAddon;
-            $inspectionAmount = $includeInstallation
-                ? CheckoutPricing::inspectionTotalFromCartItems($rawItems, $settings)
-                : 0;
+            // Match Buy Now product-only: sum category delivery / install / inspection across distinct categories.
+            $categoryFees = CheckoutPricing::shopCartCategoryFees($rawItems, $settings);
+            $deliveryFee = (int) round($categoryFees['delivery']);
 
-            // 3) Totals — outright discount on items; insurance on items subtotal only (not installation).
+            $installationFromProducts = CheckoutPricing::installationTotalFromCartItems($rawItems);
+            if ($categoryFees['category_keys'] !== [] && (float) $categoryFees['installation'] > 0) {
+                // Prefer admin category installation (same as Buy Now product-only).
+                $installationFull = (int) round((float) $categoryFees['installation']);
+                $installationFromProducts = $installationFull;
+                $installationFlatAddonForTotals = 0;
+            } else {
+                $installationFull = $installationFromProducts + $installationFlatAddon;
+                $installationFlatAddonForTotals = $installationFlatAddon;
+            }
+
+            // Always compute inspection for UI preview; charge only when installation is included.
+            $inspectionPreview = (int) round((float) $categoryFees['inspection']);
+            $inspectionAmount = $includeInstallation ? $inspectionPreview : 0;
+
+            // 3) Totals — insurance on items subtotal only (not installation).
             $catalogItemsSubtotal = (float) round($cartItems->sum('subtotal'), 2);
             $outrightDiscountAmount = $outrightPct > 0
                 ? round($catalogItemsSubtotal * ($outrightPct / 100), 2)
@@ -267,12 +283,14 @@ class CartController extends Controller
             $installation = [
                 'description' => $installationText,
                 'installation_products_total' => $installationFromProducts,
-                'installation_flat_addon' => $installationFlatAddon,
+                'installation_flat_addon' => $installationFlatAddonForTotals,
                 'price' => $installationFull,
-                'inspection_price' => $inspectionAmount,
+                // Always expose preview so unchecked install still shows the fee amount.
+                'inspection_price' => $inspectionPreview,
                 'insurance_fee_percentage' => $insPct,
                 'insurance_price' => $insuranceAmount,
                 'estimated_date' => CheckoutPricing::installationEstimatedDate($settings),
+                'fee_category_keys' => $categoryFees['category_keys'],
             ];
             $delivery = [
                 'price' => $deliveryFee,
@@ -301,9 +319,10 @@ class CartController extends Controller
                         'items_subtotal_after_discount' => $itemsSubtotalAfterDiscount,
                         'delivery' => $deliveryFee,
                         'installation_products' => $installationFromProducts,
-                        'installation_flat_addon' => $installationFlatAddon,
+                        'installation_flat_addon' => $installationFlatAddonForTotals,
                         'installation_total' => $installationFull,
                         'inspection' => $inspectionAmount,
+                        'inspection_preview' => $inspectionPreview,
                         'insurance' => $insuranceAmount,
                         'insurance_fee_percentage' => $insPct,
                         'vat_percentage' => $vatPct,
@@ -311,6 +330,7 @@ class CartController extends Controller
                         'taxable_base' => (int) round($taxableBase),
                         'grand_total' => $grandTotal,
                         'include_installation' => $includeInstallation,
+                        'fee_category_keys' => $categoryFees['category_keys'],
                     ],
                     'grand_total' => $grandTotal,
                 ],

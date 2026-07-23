@@ -95,6 +95,16 @@ class CheckoutPricing
      */
     public static function inspectionTotalFromCartItems(Collection $cartItems, CheckoutSetting $settings): int
     {
+        return (int) round(self::shopCartCategoryFees($cartItems, $settings)['inspection']);
+    }
+
+    /**
+     * Collect unique Buy Now fee-category keys from cart products.
+     *
+     * @return array<int, string>
+     */
+    public static function shopCartFeeCategoryKeys(Collection $cartItems): array
+    {
         $keys = [];
         foreach ($cartItems as $item) {
             $model = $item->itemable ?? null;
@@ -108,7 +118,43 @@ class CheckoutPricing
             }
         }
 
-        return (int) round($settings->sumProductCategoryFees($keys, 'inspection'));
+        return array_values(array_unique($keys));
+    }
+
+    /**
+     * Shop cart fees aligned with Buy Now product-only: sum admin category fees
+     * across distinct product categories in the cart (not × quantity of the same category).
+     *
+     * @return array{
+     *   category_keys: array<int, string>,
+     *   delivery: float,
+     *   installation: float,
+     *   inspection: float
+     * }
+     */
+    public static function shopCartCategoryFees(Collection $cartItems, CheckoutSetting $settings): array
+    {
+        $keys = self::shopCartFeeCategoryKeys($cartItems);
+        $delivery = $keys !== []
+            ? (float) $settings->sumProductCategoryFees($keys, 'delivery')
+            : 0.0;
+        if ($delivery <= 0) {
+            $delivery = (float) ($settings->delivery_fee ?? 0);
+        }
+
+        $installation = $keys !== []
+            ? (float) $settings->sumProductCategoryFees($keys, 'installation')
+            : 0.0;
+        $inspection = $keys !== []
+            ? (float) $settings->sumProductCategoryFees($keys, 'inspection')
+            : 0.0;
+
+        return [
+            'category_keys' => $keys,
+            'delivery' => round($delivery, 2),
+            'installation' => round($installation, 2),
+            'inspection' => round($inspection, 2),
+        ];
     }
 
     public static function vatAmount(float $taxableBase, float $vatPercent): int

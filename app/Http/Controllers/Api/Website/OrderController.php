@@ -554,14 +554,17 @@ class OrderController extends Controller
         }
 
         $settings = CheckoutSetting::get();
-        $deliveryFee = (float) $settings->delivery_fee;
+        $categoryFees = CheckoutPricing::shopCartCategoryFees($cartItems, $settings);
+        $deliveryFee = (float) $categoryFees['delivery'];
         $installationFromProducts = (float) CheckoutPricing::installationTotalFromCartItems($cartItems);
         $installationAddon = (float) ($settings->installation_flat_addon ?? 0);
-        $installationSumFull = $installationFromProducts + $installationAddon;
+        if ($categoryFees['category_keys'] !== [] && (float) $categoryFees['installation'] > 0) {
+            $installationSumFull = (float) $categoryFees['installation'];
+        } else {
+            $installationSumFull = $installationFromProducts + $installationAddon;
+        }
         $includeInstallation = (bool) ($data['include_installation'] ?? false);
-        $inspectionSum = $includeInstallation
-            ? (float) CheckoutPricing::inspectionTotalFromCartItems($cartItems, $settings)
-            : 0.0;
+        $inspectionSum = (float) $categoryFees['inspection'];
         $insPct = (float) ($settings->insurance_fee_percentage ?? config('checkout.insurance_fee_percentage', 3));
         $vatPct = (float) ($settings->vat_percentage ?? config('checkout.vat_percentage', 7.5));
         $deliveryWindow = CheckoutPricing::deliveryWindow($settings);
