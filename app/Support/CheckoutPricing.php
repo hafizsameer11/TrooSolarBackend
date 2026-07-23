@@ -77,15 +77,38 @@ class CheckoutPricing
         return self::addWorkingDays($base, $days)->toDateString();
     }
 
-    /** Insurance as % of (items subtotal + full installation amount). */
+    /**
+     * Insurance as % of items subtotal only (installation / inspection excluded).
+     * $installationFull is retained for call-site compatibility and ignored.
+     */
     public static function insuranceAmountFromPercent(float $itemsSubtotal, float $installationFull, float $percent): int
     {
         if ($percent <= 0) {
             return 0;
         }
-        $base = max(0, $itemsSubtotal) + max(0, $installationFull);
 
-        return (int) round($base * ($percent / 100.0));
+        return (int) round(max(0, $itemsSubtotal) * ($percent / 100.0));
+    }
+
+    /**
+     * Sum admin category inspection fees for distinct product categories in the cart.
+     */
+    public static function inspectionTotalFromCartItems(Collection $cartItems, CheckoutSetting $settings): int
+    {
+        $keys = [];
+        foreach ($cartItems as $item) {
+            $model = $item->itemable ?? null;
+            if (! $model instanceof \App\Models\Product) {
+                continue;
+            }
+            $model->loadMissing('category');
+            $key = CheckoutSetting::inferProductFeeCategory($model);
+            if ($key) {
+                $keys[] = $key;
+            }
+        }
+
+        return (int) round($settings->sumProductCategoryFees($keys, 'inspection'));
     }
 
     public static function vatAmount(float $taxableBase, float $vatPercent): int

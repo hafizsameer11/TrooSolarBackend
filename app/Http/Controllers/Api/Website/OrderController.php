@@ -218,6 +218,55 @@ class OrderController extends Controller
         }
 
         $fees = round($delivery + $installation + $insurance + $material + $inspection, 2);
+        $hasStoredProductPrice = Schema::hasColumn('orders', 'product_price') && $order->product_price !== null;
+        $isShopOrder = strtolower((string) ($order->order_type ?? '')) === 'shop';
+
+        // Shop cart orders: trust persisted product_price (after-discount items). Do not infer a phantom discount.
+        if ($hasStoredProductPrice && ($isShopOrder || ! $isBuyNow)) {
+            $itemsAfter = (float) $order->product_price;
+            $discount = max(0.0, round($catalogItemsSubtotal - $itemsAfter, 2));
+            if ($vat <= 0.005 && $itemsAfter > 0) {
+                // Shop VAT is charged on discounted items only (not delivery/install).
+                $expectedVat = (float) CheckoutPricing::vatAmount($itemsAfter, $vatPct);
+                if ($storedTotal > 0) {
+                    $expectedTotal = round($itemsAfter + $delivery + $installation + $inspection + $insurance + $expectedVat, 2);
+                    if (abs($storedTotal - $expectedTotal) < 1.0) {
+                        $vat = $expectedVat;
+                    }
+                } else {
+                    $vat = $expectedVat;
+                }
+            }
+            $sumBeforeVat = round($itemsAfter + $delivery + $installation + $material + $inspection, 2);
+            $grandTotal = $storedTotal > 0
+                ? $storedTotal
+                : round($sumBeforeVat + $vat + $insurance, 2);
+            $discountPct = null;
+            if ($discount > 0.005 && $catalogItemsSubtotal > 0) {
+                $discountPct = round(100 * ($discount / $catalogItemsSubtotal), 2);
+                if ($configuredDiscountPct > 0 && abs($discountPct - $configuredDiscountPct) <= 0.5) {
+                    $discountPct = round($configuredDiscountPct, 2);
+                }
+            }
+
+            return [
+                'catalog_items_subtotal' => round($catalogItemsSubtotal, 2),
+                'outright_discount_amount' => $discount > 0.005 ? round($discount, 2) : 0.0,
+                'outright_discount_percentage' => $discountPct,
+                'items_subtotal_after_discount' => round($itemsAfter, 2),
+                'delivery_fee' => $delivery,
+                'installation_fee' => $installation,
+                'insurance_fee' => $insurance,
+                'material_cost' => $material,
+                'inspection_fee' => $inspection,
+                'fees_total' => round($delivery + $installation + $insurance + $material + $inspection, 2),
+                'sum_before_vat' => $sumBeforeVat,
+                'vat_amount' => round($vat, 2),
+                'vat_percentage' => $vatPct,
+                'insurance_fee_percentage' => $insPct,
+                'grand_total' => round($grandTotal, 2),
+            ];
+        }
 
         if ($storedTotal > 0) {
             $postFees = round($storedTotal - $fees, 2);
@@ -510,6 +559,9 @@ class OrderController extends Controller
         $installationAddon = (float) ($settings->installation_flat_addon ?? 0);
         $installationSumFull = $installationFromProducts + $installationAddon;
         $includeInstallation = (bool) ($data['include_installation'] ?? false);
+        $inspectionSum = $includeInstallation
+            ? (float) CheckoutPricing::inspectionTotalFromCartItems($cartItems, $settings)
+            : 0.0;
         $insPct = (float) ($settings->insurance_fee_percentage ?? config('checkout.insurance_fee_percentage', 3));
         $vatPct = (float) ($settings->vat_percentage ?? config('checkout.vat_percentage', 7.5));
         $deliveryWindow = CheckoutPricing::deliveryWindow($settings);
@@ -638,12 +690,12 @@ class OrderController extends Controller
         $itemsSubtotalAfterDiscount = max(0, round($catalogItemsSubtotal - $outrightDiscountAmount, 2));
 
         $insuranceFee = $includeInstallation
-            ? (float) CheckoutPricing::insuranceAmountFromPercent($catalogItemsSubtotal, $installationSumFull, $insPct)
+            ? (float) CheckoutPricing::insuranceAmountFromPercent($catalogItemsSubtotal, 0.0, $insPct)
             : 0.0;
         $vatAmount = (float) CheckoutPricing::vatAmount((float) $itemsSubtotalAfterDiscount, $vatPct);
         $taxableBase = $itemsSubtotalAfterDiscount + $deliveryFee;
         if ($includeInstallation) {
-            $taxableBase += $installationSumFull;
+            $taxableBase += $installationSumFull + $inspectionSum;
         }
         $orderTotal = round($taxableBase + $insuranceFee + $vatAmount, 2);
 
@@ -655,6 +707,13 @@ class OrderController extends Controller
             'installation_price' => $includeInstallation ? $installationSumFull : 0.0,
             'insurance_fee' => $insuranceFee,
         ];
+        if (Schema::hasColumn('orders', 'product_price')) {
+            // Persist after-discount items total so receipts match checkout (no phantom discount).
+            $updatePayload['product_price'] = $itemsSubtotalAfterDiscount;
+        }
+        if (Schema::hasColumn('orders', 'inspection_fee')) {
+            $updatePayload['inspection_fee'] = $includeInstallation ? $inspectionSum : 0.0;
+        }
         if (Schema::hasColumn('orders', 'vat_amount')) {
             $updatePayload['vat_amount'] = $vatAmount;
         }
@@ -888,6 +947,19 @@ class OrderController extends Controller
         }
         if (
             $onlineCheckoutDiscount <= 0.005
+            && Schema::hasColumn('orders', 'product_price')
+            && $order->product_price !== null
+            && $catalogItemsSubtotal > 0
+        ) {
+            $discountedProducts = (float) ($order->product_price ?? 0);
+            $storedDiscount = max(0.0, round($catalogItemsSubtotal - $discountedProducts, 2));
+            if ($storedDiscount > 0.005) {
+                $onlineCheckoutDiscount = $storedDiscount;
+                $itemsSubtotalAfterDiscount = $discountedProducts;
+            }
+        }
+        if (
+            $onlineCheckoutDiscount <= 0.005
             && ($order->order_type ?? null) === 'buy_now'
             && Schema::hasColumn('orders', 'product_price')
             && $catalogItemsSubtotal > 0
@@ -911,7 +983,8 @@ class OrderController extends Controller
         $outrightDiscountPct = null;
         if ($catalogItemsSubtotal > 0.005) {
             $breakdown = $this->resolveOrderPaymentBreakdown($order, $catalogItemsSubtotal);
-            if (($order->order_type ?? null) === 'buy_now') {
+            $orderType = strtolower((string) ($order->order_type ?? ''));
+            if ($orderType === 'buy_now' || $orderType === 'shop') {
                 $onlineCheckoutDiscount = (float) $breakdown['outright_discount_amount'];
                 $itemsSubtotalAfterDiscount = (float) $breakdown['items_subtotal_after_discount'];
                 $vatAmount = (float) $breakdown['vat_amount'];
