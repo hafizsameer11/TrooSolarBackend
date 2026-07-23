@@ -603,7 +603,6 @@ class OrderController extends Controller
         $primaryProductId = null;
         $primaryBundleId  = null;
         $orderPaymentMethod = strtolower((string) ($data['payment_method'] ?? ''));
-        $isOutrightCheckout = in_array($orderPaymentMethod, ['direct', 'cash'], true);
 
         $referralCodeInput = trim((string) ($data['referral_code'] ?? ''));
         if ($referralCodeInput !== '') {
@@ -615,13 +614,9 @@ class OrderController extends Controller
             }
         }
 
-        // Must match CartController::checkoutSummary: direct/cash checkout uses admin outright % on line items.
-        // (Referral code is validated separately when supplied; it does not gate the checkout discount.)
-        $applyOutrightDiscount = $isOutrightCheckout;
-        $referralSettings = $applyOutrightDiscount ? ReferralSettings::getSettings() : null;
-        $outrightDiscountPercentage = $applyOutrightDiscount
-            ? (float) ($referralSettings->outright_discount_percentage ?? 0)
-            : 0.0;
+        // Shop cart orders do not use Buy Now outright discount (admin "Buy Now Discount").
+        $outrightDiscountPercentage = 0.0;
+        $applyOutrightDiscount = false;
 
         foreach ($cartItems as $ci) {
             $itemable = $ci->itemable; // Product|Bundles|null

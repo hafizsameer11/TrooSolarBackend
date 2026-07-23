@@ -17,7 +17,6 @@ use App\Models\Bundles;
 use App\Models\CheckoutSetting;
 use App\Models\CustomOrderLink;
 use App\Models\AuditRequest;
-use App\Models\ReferralSettings;
 use App\Models\User;
 use App\Support\CheckoutPricing;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
@@ -178,15 +177,11 @@ class CartController extends Controller
                 ], 200);
             }
 
-            // Align line pricing with OrderController::store (referral outright discount on direct/cash).
-            $paymentMethod = strtolower((string) $request->input('payment_method', 'direct'));
-            $isOutrightCheckout = in_array($paymentMethod, ['direct', 'cash'], true);
-            $outrightPct = $isOutrightCheckout
-                ? (float) (ReferralSettings::getSettings()->outright_discount_percentage ?? 0)
-                : 0.0;
+            // Shop cart has no Buy Now outright discount — that setting is Buy Now only.
+            $outrightPct = 0.0;
 
             // 2) Build items with product details
-            $cartItems = $rawItems->map(function ($item) use ($outrightPct) {
+            $cartItems = $rawItems->map(function ($item) {
                 $qty = max(1, (int) $item->quantity);
 
                 if (!$item->itemable) {
