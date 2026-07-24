@@ -22,15 +22,16 @@ class CheckoutSettingsController extends Controller
     private function formatSettingsPayload(CheckoutSetting $s): array
     {
         $window = CheckoutPricing::deliveryWindow($s);
-        $categoryDefs = CheckoutSetting::productCategoryDefinitions();
+        $channel = CheckoutSetting::normalizeChannel($s->channel ?? CheckoutSetting::CHANNEL_BUY_NOW);
+        $categoryDefs = CheckoutSetting::categoryDefinitionsForChannel($channel);
 
         return [
-            'channel' => CheckoutSetting::normalizeChannel($s->channel ?? CheckoutSetting::CHANNEL_BUY_NOW),
+            'channel' => $channel,
             'delivery_fee' => (int) $s->delivery_fee,
-            'category_delivery_fees' => $s->normalizedCategoryDeliveryFees(),
-            'category_installation_fees' => $s->normalizedCategoryInstallationFees(),
-            'category_materials_fees' => $s->normalizedCategoryMaterialsFees(),
-            'category_inspection_fees' => $s->normalizedCategoryInspectionFees(),
+            'category_delivery_fees' => $s->normalizedCategoryDeliveryFees($channel),
+            'category_installation_fees' => $s->normalizedCategoryInstallationFees($channel),
+            'category_materials_fees' => $s->normalizedCategoryMaterialsFees($channel),
+            'category_inspection_fees' => $s->normalizedCategoryInspectionFees($channel),
             'product_categories' => $categoryDefs,
             'delivery_min_working_days' => (int) $s->delivery_min_working_days,
             'delivery_max_working_days' => (int) $s->delivery_max_working_days,
@@ -90,9 +91,11 @@ class CheckoutSettingsController extends Controller
     {
         try {
             $channel = $this->resolveChannel($request);
-            $categoryKeys = collect(CheckoutSetting::productCategoryDefinitions())
+            $categoryKeys = collect(CheckoutSetting::categoryDefinitionsForChannel($channel))
                 ->pluck('key')
+                ->map(static fn ($k) => (string) $k)
                 ->filter()
+                ->values()
                 ->all();
 
             $request->validate([

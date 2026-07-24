@@ -99,7 +99,8 @@ class CheckoutPricing
     }
 
     /**
-     * Collect unique Buy Now fee-category keys from cart products.
+     * Collect unique Solar Shop fee keys from cart products = stringified category_id.
+     * (Buy Now keeps inferProductFeeCategory separately — do not use it here.)
      *
      * @return array<int, string>
      */
@@ -111,10 +112,13 @@ class CheckoutPricing
             if (! $model instanceof \App\Models\Product) {
                 continue;
             }
-            $model->loadMissing('category');
-            $key = CheckoutSetting::inferProductFeeCategory($model);
-            if ($key) {
-                $keys[] = $key;
+            $categoryId = (int) ($model->category_id ?? 0);
+            if ($categoryId <= 0) {
+                $model->loadMissing('category');
+                $categoryId = (int) ($model->category?->id ?? 0);
+            }
+            if ($categoryId > 0) {
+                $keys[] = (string) $categoryId;
             }
         }
 
@@ -122,14 +126,14 @@ class CheckoutPricing
     }
 
     /**
-     * Shop cart fees aligned with Buy Now product-only: sum admin category fees
-     * across distinct product categories in the cart (not × quantity of the same category).
+     * Solar Shop cart fees: sum admin shop-channel fees for each distinct product category_id.
      *
      * @return array{
      *   category_keys: array<int, string>,
      *   delivery: float,
      *   installation: float,
-     *   inspection: float
+     *   inspection: float,
+     *   materials: float
      * }
      */
     public static function shopCartCategoryFees(Collection $cartItems, CheckoutSetting $settings): array
@@ -148,12 +152,16 @@ class CheckoutPricing
         $inspection = $keys !== []
             ? (float) $settings->sumProductCategoryFees($keys, 'inspection')
             : 0.0;
+        $materials = $keys !== []
+            ? (float) $settings->sumProductCategoryFees($keys, 'materials')
+            : 0.0;
 
         return [
             'category_keys' => $keys,
             'delivery' => round($delivery, 2),
             'installation' => round($installation, 2),
             'inspection' => round($inspection, 2),
+            'materials' => round($materials, 2),
         ];
     }
 

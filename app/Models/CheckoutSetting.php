@@ -105,6 +105,41 @@ class CheckoutSetting extends Model
     }
 
     /**
+     * Solar Shop fee buckets: every catalog category (keyed by category id string).
+     * Buy Now continues to use productCategoryDefinitions() config slugs only.
+     *
+     * @return array<int, array{key: string, id: int, label: string}>
+     */
+    public static function shopCatalogCategoryDefinitions(): array
+    {
+        return Category::query()
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get(['id', 'title'])
+            ->map(static function ($cat) {
+                return [
+                    'key' => (string) $cat->id,
+                    'id' => (int) $cat->id,
+                    'label' => (string) ($cat->title ?: ('Category #'.$cat->id)),
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Fee category defs for a checkout channel.
+     *
+     * @return array<int, array{key: string, label: string, id?: int}>
+     */
+    public static function categoryDefinitionsForChannel(string $channel): array
+    {
+        return self::normalizeChannel($channel) === self::CHANNEL_SHOP
+            ? self::shopCatalogCategoryDefinitions()
+            : self::productCategoryDefinitions();
+    }
+
+    /**
      * Delivery fee for a Buy Now / BNPL product category (falls back to global delivery_fee).
      */
     public function deliveryFeeForCategory(?string $productCategory): float
@@ -247,30 +282,48 @@ class CheckoutSetting extends Model
         return max(0, $globalFallback);
     }
 
-    /** Normalized map keyed by product category slug. */
-    public function normalizedCategoryDeliveryFees(): array
+    /** Normalized map keyed by product category slug (Buy Now) or category id (Shop). */
+    public function normalizedCategoryDeliveryFees(?string $channel = null): array
     {
-        return $this->normalizedCategoryFeeMap('category_delivery_fees', (int) ($this->delivery_fee ?? 0));
+        return $this->normalizedCategoryFeeMap(
+            'category_delivery_fees',
+            (int) ($this->delivery_fee ?? 0),
+            $channel
+        );
     }
 
-    public function normalizedCategoryInstallationFees(): array
+    public function normalizedCategoryInstallationFees(?string $channel = null): array
     {
-        return $this->normalizedCategoryFeeMap('category_installation_fees', (int) ($this->installation_flat_addon ?? 0));
+        return $this->normalizedCategoryFeeMap(
+            'category_installation_fees',
+            (int) ($this->installation_flat_addon ?? 0),
+            $channel
+        );
     }
 
-    public function normalizedCategoryMaterialsFees(): array
+    public function normalizedCategoryMaterialsFees(?string $channel = null): array
     {
-        return $this->normalizedCategoryFeeMap('category_materials_fees', (int) ($this->installation_materials_cost ?? 0));
+        return $this->normalizedCategoryFeeMap(
+            'category_materials_fees',
+            (int) ($this->installation_materials_cost ?? 0),
+            $channel
+        );
     }
 
-    public function normalizedCategoryInspectionFees(): array
+    public function normalizedCategoryInspectionFees(?string $channel = null): array
     {
-        return $this->normalizedCategoryFeeMap('category_inspection_fees', 0);
+        return $this->normalizedCategoryFeeMap('category_inspection_fees', 0, $channel);
     }
 
-    private function normalizedCategoryFeeMap(string $column, int $globalFallback): array
-    {
-        $defs = self::productCategoryDefinitions();
+    private function normalizedCategoryFeeMap(
+        string $column,
+        int $globalFallback,
+        ?string $channel = null
+    ): array {
+        $channel = self::normalizeChannel(
+            $channel ?? ($this->channel ?? self::CHANNEL_BUY_NOW)
+        );
+        $defs = self::categoryDefinitionsForChannel($channel);
         $stored = is_array($this->{$column} ?? null) ? $this->{$column} : [];
         $out = [];
 
@@ -279,9 +332,16 @@ class CheckoutSetting extends Model
             if ($slug === '') {
                 continue;
             }
-            $out[$slug] = array_key_exists($slug, $stored)
-                ? max(0, (int) $stored[$slug])
-                : max(0, $globalFallback);
+            // Prefer exact key; also accept numeric id without casting issues.
+            $value = null;
+            if (array_key_exists($slug, $stored)) {
+                $value = $stored[$slug];
+            } elseif (ctype_digit($slug) && array_key_exists((int) $slug, $stored)) {
+                $value = $stored[(int) $slug];
+            }
+            $out[$slug] = $value !== null && $value !== ''
+                ? max(0, (int) $value)
+                : 0;
         }
 
         return $out;
