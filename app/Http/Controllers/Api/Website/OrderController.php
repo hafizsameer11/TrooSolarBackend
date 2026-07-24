@@ -119,7 +119,12 @@ class OrderController extends Controller
      */
     private function resolveOrderPaymentBreakdown(Order $order, float $catalogItemsSubtotal): array
     {
-        $settings = CheckoutSetting::get();
+        $orderType = strtolower((string) ($order->order_type ?? ''));
+        $settings = CheckoutSetting::get(
+            $orderType === 'shop'
+                ? CheckoutSetting::CHANNEL_SHOP
+                : CheckoutSetting::CHANNEL_BUY_NOW
+        );
         $vatPct = (float) ($settings->vat_percentage ?? config('checkout.vat_percentage', 7.5));
         $insPct = (float) ($settings->insurance_fee_percentage ?? config('checkout.insurance_fee_percentage', 3));
         $referral = ReferralSettings::getSettings();
@@ -553,7 +558,7 @@ class OrderController extends Controller
             }
         }
 
-        $settings = CheckoutSetting::get();
+        $settings = CheckoutSetting::get(CheckoutSetting::CHANNEL_SHOP);
         $categoryFees = CheckoutPricing::shopCartCategoryFees($cartItems, $settings);
         $deliveryFee = (float) $categoryFees['delivery'];
         $installationFromProducts = (float) CheckoutPricing::installationTotalFromCartItems($cartItems);
@@ -975,7 +980,12 @@ class OrderController extends Controller
         }
 
         $vatAmount = Schema::hasColumn('orders', 'vat_amount') ? (float) ($order->vat_amount ?? 0) : 0.0;
-        $settingsForVat = CheckoutSetting::get();
+        $orderTypeForVat = strtolower((string) ($order->order_type ?? ''));
+        $settingsForVat = CheckoutSetting::get(
+            $orderTypeForVat === 'shop'
+                ? CheckoutSetting::CHANNEL_SHOP
+                : CheckoutSetting::CHANNEL_BUY_NOW
+        );
         $vatPctDisplay = (float) ($settingsForVat->vat_percentage ?? config('checkout.vat_percentage', 7.5));
 
         $outrightDiscountPct = null;
@@ -1568,7 +1578,7 @@ class OrderController extends Controller
             $itemsSubtotalAfterDiscount = max(0, round($itemsSubtotal - $outrightDiscountAmount, 2));
 
             // Delivery / installation: admin checkout settings, bundle materials, or non-legacy location/state — never hardcoded ₦25k/₦50k.
-            $checkoutSettings = CheckoutSetting::get();
+            $checkoutSettings = CheckoutSetting::get(CheckoutSetting::CHANNEL_BUY_NOW);
             $resolvedFees = CheckoutPricing::resolveBuyNowCheckoutFees(
                 $bundle,
                 isset($data['delivery_location_id']) ? (int) $data['delivery_location_id'] : null,

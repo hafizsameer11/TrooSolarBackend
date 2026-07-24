@@ -179,7 +179,7 @@ class CheckoutPricing
         ?CheckoutSetting $settings = null,
         ?string $productCategory = null,
     ): array {
-        $settings ??= CheckoutSetting::get();
+        $settings ??= CheckoutSetting::get(CheckoutSetting::CHANNEL_BUY_NOW);
 
         $deliveryFee = 0.0;
         $installationFee = 0.0;

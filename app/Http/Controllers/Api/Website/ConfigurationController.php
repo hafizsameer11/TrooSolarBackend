@@ -157,7 +157,7 @@ class ConfigurationController extends Controller
     public function getCheckoutSettings()
     {
         try {
-            $s = CheckoutSetting::get();
+            $s = CheckoutSetting::get(CheckoutSetting::CHANNEL_BUY_NOW);
             $window = CheckoutPricing::deliveryWindow($s);
 
             return ResponseHelper::success([

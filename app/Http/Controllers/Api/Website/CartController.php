@@ -101,7 +101,7 @@ class CartController extends Controller
         // }
 
         try {
-            $settings = CheckoutSetting::get();
+            $settings = CheckoutSetting::get(CheckoutSetting::CHANNEL_SHOP);
             $installationText = trim((string) ($settings->installation_description ?? ''));
             if ($installationText === '') {
                 $installationText = (string) config('checkout.installation_text',

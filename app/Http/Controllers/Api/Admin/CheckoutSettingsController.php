@@ -12,12 +12,20 @@ use Illuminate\Support\Facades\Log;
 
 class CheckoutSettingsController extends Controller
 {
+    private function resolveChannel(Request $request): string
+    {
+        return CheckoutSetting::normalizeChannel(
+            $request->query('channel', $request->input('channel', CheckoutSetting::CHANNEL_BUY_NOW))
+        );
+    }
+
     private function formatSettingsPayload(CheckoutSetting $s): array
     {
         $window = CheckoutPricing::deliveryWindow($s);
         $categoryDefs = CheckoutSetting::productCategoryDefinitions();
 
         return [
+            'channel' => CheckoutSetting::normalizeChannel($s->channel ?? CheckoutSetting::CHANNEL_BUY_NOW),
             'delivery_fee' => (int) $s->delivery_fee,
             'category_delivery_fees' => $s->normalizedCategoryDeliveryFees(),
             'category_installation_fees' => $s->normalizedCategoryInstallationFees(),
@@ -56,12 +64,13 @@ class CheckoutSettingsController extends Controller
     }
 
     /**
-     * GET /api/admin/checkout-settings
+     * GET /api/admin/checkout-settings?channel=buy_now|shop
      */
-    public function show()
+    public function show(Request $request)
     {
         try {
-            $s = CheckoutSetting::get();
+            $channel = $this->resolveChannel($request);
+            $s = CheckoutSetting::get($channel);
 
             return ResponseHelper::success(
                 $this->formatSettingsPayload($s),
@@ -75,17 +84,19 @@ class CheckoutSettingsController extends Controller
     }
 
     /**
-     * PUT /api/admin/checkout-settings
+     * PUT /api/admin/checkout-settings?channel=buy_now|shop
      */
     public function update(Request $request)
     {
         try {
+            $channel = $this->resolveChannel($request);
             $categoryKeys = collect(CheckoutSetting::productCategoryDefinitions())
                 ->pluck('key')
                 ->filter()
                 ->all();
 
             $request->validate([
+                'channel' => 'nullable|string|in:buy_now,shop',
                 'delivery_fee' => 'nullable|integer|min:0|max:100000000',
                 'category_delivery_fees' => 'nullable|array',
                 'category_delivery_fees.*' => 'nullable|integer|min:0|max:100000000',
@@ -106,7 +117,7 @@ class CheckoutSettingsController extends Controller
                 'installation_description' => 'nullable|string|max:5000',
             ]);
 
-            $s = CheckoutSetting::get();
+            $s = CheckoutSetting::get($channel);
             if ($request->has('delivery_fee')) {
                 $s->delivery_fee = (int) $request->delivery_fee;
             }
@@ -164,10 +175,11 @@ class CheckoutSettingsController extends Controller
             if ($s->delivery_max_working_days < $s->delivery_min_working_days) {
                 $s->delivery_max_working_days = $s->delivery_min_working_days;
             }
+            $s->channel = $channel;
             $s->save();
 
             return ResponseHelper::success(
-                $this->formatSettingsPayload($s),
+                $this->formatSettingsPayload($s->fresh()),
                 'Checkout settings updated successfully'
             );
         } catch (\Illuminate\Validation\ValidationException $e) {

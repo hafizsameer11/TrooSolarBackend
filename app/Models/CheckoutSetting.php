@@ -6,9 +6,14 @@ use Illuminate\Database\Eloquent\Model;
 
 class CheckoutSetting extends Model
 {
+    public const CHANNEL_BUY_NOW = 'buy_now';
+
+    public const CHANNEL_SHOP = 'shop';
+
     protected $table = 'checkout_settings';
 
     protected $fillable = [
+        'channel',
         'delivery_fee',
         'category_delivery_fees',
         'category_installation_fees',
@@ -43,14 +48,40 @@ class CheckoutSetting extends Model
         'installation_schedule_working_days' => 'integer',
     ];
 
-    /**
-     * Singleton row for shop checkout (delivery fee, estimates, installation copy).
-     */
-    public static function get(): self
+    public static function normalizeChannel(?string $channel): string
     {
-        $row = self::query()->first();
+        $channel = strtolower(trim((string) $channel));
+
+        return $channel === self::CHANNEL_SHOP
+            ? self::CHANNEL_SHOP
+            : self::CHANNEL_BUY_NOW;
+    }
+
+    /**
+     * Settings row for a checkout channel.
+     * - buy_now: Buy Now / BNPL product fees
+     * - shop: Solar Shop (add-to-cart) checkout fees
+     */
+    public static function get(?string $channel = self::CHANNEL_BUY_NOW): self
+    {
+        $channel = self::normalizeChannel($channel);
+
+        $row = self::query()->where('channel', $channel)->first();
+        if (! $row && $channel === self::CHANNEL_SHOP) {
+            // Bootstrap shop from buy_now if migration has not run / row missing.
+            $buyNow = self::query()->where('channel', self::CHANNEL_BUY_NOW)->first()
+                ?? self::query()->first();
+            if ($buyNow) {
+                $attrs = $buyNow->replicate()->getAttributes();
+                $attrs['channel'] = self::CHANNEL_SHOP;
+                unset($attrs['id']);
+                $row = self::create($attrs);
+            }
+        }
+
         if (! $row) {
             $row = self::create([
+                'channel' => $channel,
                 'delivery_fee' => (int) config('checkout.delivery_fee', 0),
                 'delivery_min_working_days' => (int) config('checkout.delivery_min_working_days', 7),
                 'delivery_max_working_days' => (int) config('checkout.delivery_max_working_days', 10),
