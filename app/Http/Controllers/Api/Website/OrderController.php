@@ -569,6 +569,7 @@ class OrderController extends Controller
             $installationSumFull = $installationFromProducts + $installationAddon;
         }
         $includeInstallation = (bool) ($data['include_installation'] ?? false);
+        $includeInsurance = (bool) ($data['include_insurance'] ?? false);
         $inspectionSum = (float) $categoryFees['inspection'];
         $insPct = (float) ($settings->insurance_fee_percentage ?? config('checkout.insurance_fee_percentage', 3));
         $vatPct = (float) ($settings->vat_percentage ?? config('checkout.vat_percentage', 7.5));
@@ -692,7 +693,8 @@ class OrderController extends Controller
             : 0.0;
         $itemsSubtotalAfterDiscount = max(0, round($catalogItemsSubtotal - $outrightDiscountAmount, 2));
 
-        $insuranceFee = $includeInstallation
+        // Shop cart: insurance is optional and independent of installation.
+        $insuranceFee = $includeInsurance
             ? (float) CheckoutPricing::insuranceAmountFromPercent($catalogItemsSubtotal, 0.0, $insPct)
             : 0.0;
         $vatAmount = (float) CheckoutPricing::vatAmount((float) $itemsSubtotalAfterDiscount, $vatPct);
@@ -1033,6 +1035,7 @@ class OrderController extends Controller
             'include_installation' => (bool) ($order->include_installation ?? false),
             'vat_amount'       => $vatAmount,
             'vat_percentage'   => $vatPctDisplay,
+            'insurance_fee_percentage' => (float) ($settingsForVat->insurance_fee_percentage ?? config('checkout.insurance_fee_percentage', 3)),
             'estimated_delivery_from' => optional($order->estimated_delivery_from)->format('Y-m-d'),
             'estimated_delivery_to' => optional($order->estimated_delivery_to)->format('Y-m-d'),
             'delivery_estimate_label' => $order->delivery_estimate_label,

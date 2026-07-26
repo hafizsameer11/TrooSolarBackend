@@ -33,6 +33,7 @@ class StoreOrderRequest extends FormRequest
         'installation_price'      => 'nullable|numeric',
         'mono_loan_calculation_id'=> 'nullable|exists:mono_loan_calculations,id',
         'include_installation'    => 'nullable|boolean',
+        'include_insurance'       => 'nullable|boolean',
         'installation_requested_date' => 'nullable|date|date_format:Y-m-d',
         /** Required for online (Flutterwave) checkout — order is created only after payment succeeds. */
         'flutterwave_transaction_id' => [
