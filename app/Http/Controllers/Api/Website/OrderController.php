@@ -442,7 +442,13 @@ class OrderController extends Controller
             $order->save();
             $this->notifyCustomerOrderStatusChange($order, $previousStatus);
 
-            return ResponseHelper::success('Order status updated successfully', 200);
+            return ResponseHelper::success(
+                [
+                    'id' => $order->id,
+                    'order_status' => $order->order_status,
+                ],
+                'Order status updated successfully'
+            );
         } catch (\Throwable $e) {
             Log::error("Order Update Status Error: {$e->getMessage()}");
             return ResponseHelper::error('Failed to update order status', 500);
