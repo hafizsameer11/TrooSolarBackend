@@ -226,10 +226,24 @@ class OrderController extends Controller
         $hasStoredProductPrice = Schema::hasColumn('orders', 'product_price') && $order->product_price !== null;
         $isShopOrder = strtolower((string) ($order->order_type ?? '')) === 'shop';
 
-        // Shop cart orders: trust persisted product_price (after-discount items). Do not infer a phantom discount.
-        if ($hasStoredProductPrice && ($isShopOrder || ! $isBuyNow)) {
-            $itemsAfter = (float) $order->product_price;
+        // Shop cart: mirror checkout. VAT is on items only — never reverse grand total ÷ 1.075
+        // (that invents phantom kobo like ₦0.23 when VAT was rounded to whole naira).
+        if ($isShopOrder || (! $isBuyNow && ($hasStoredProductPrice || $catalogItemsSubtotal > 0.005))) {
+            if ($hasStoredProductPrice) {
+                $itemsAfter = round((float) $order->product_price, 2);
+            } else {
+                $itemsAfter = round($catalogItemsSubtotal, 2);
+            }
+            // Snap float / reverse-VAT noise back to catalog when there is no real discount.
+            // Threshold ₦1: phantom diffs like ₦0.15 / ₦0.23 must never become a "Discount" line.
+            if ($catalogItemsSubtotal > 0 && abs($itemsAfter - $catalogItemsSubtotal) < 1.0) {
+                $itemsAfter = round($catalogItemsSubtotal, 2);
+            }
             $discount = max(0.0, round($catalogItemsSubtotal - $itemsAfter, 2));
+            if ($discount > 0 && $discount < 1.0) {
+                $itemsAfter = round($catalogItemsSubtotal, 2);
+                $discount = 0.0;
+            }
             if ($vat <= 0.005 && $itemsAfter > 0) {
                 // Shop VAT is charged on discounted items only (not delivery/install).
                 $expectedVat = (float) CheckoutPricing::vatAmount($itemsAfter, $vatPct);
@@ -276,12 +290,23 @@ class OrderController extends Controller
         if ($storedTotal > 0) {
             $postFees = round($storedTotal - $fees, 2);
             if ($postFees > 0) {
-                $inferredAfter = round($postFees / (1 + ($vatPct / 100)), 2);
-                $inferredVat = (float) CheckoutPricing::vatAmount($inferredAfter, $vatPct);
+                // Buy Now / legacy: VAT may sit on (items + fees). Prefer stored VAT when present.
+                $inferredAfter = $vat > 0.005
+                    ? round($storedTotal - $fees - $vat, 2)
+                    : round($postFees / (1 + ($vatPct / 100)), 2);
+                $inferredVat = $vat > 0.005
+                    ? $vat
+                    : (float) CheckoutPricing::vatAmount($inferredAfter, $vatPct);
                 if (abs($storedTotal - ($inferredAfter + $fees + $inferredVat)) < 1.0) {
                     if ($discount <= 0.005 || abs($itemsAfter - $catalogItemsSubtotal) < 0.01) {
-                        $itemsAfter = $inferredAfter;
-                        $discount = max(0.0, round($catalogItemsSubtotal - $itemsAfter, 2));
+                        // Prefer catalog when reverse math is within ₦1 (avoids .23 kobo noise).
+                        if ($catalogItemsSubtotal > 0 && abs($inferredAfter - $catalogItemsSubtotal) < 1.0) {
+                            $itemsAfter = round($catalogItemsSubtotal, 2);
+                            $discount = 0.0;
+                        } else {
+                            $itemsAfter = $inferredAfter;
+                            $discount = max(0.0, round($catalogItemsSubtotal - $itemsAfter, 2));
+                        }
                     }
                     if ($vat <= 0.005) {
                         $vat = $inferredVat;
@@ -708,7 +733,8 @@ class OrderController extends Controller
         if ($includeInstallation) {
             $taxableBase += $installationSumFull + $inspectionSum;
         }
-        $orderTotal = round($taxableBase + $insuranceFee + $vatAmount, 2);
+        // Match cart checkout-summary: whole-naira grand total (what Flutterwave is charged).
+        $orderTotal = (int) round($taxableBase + $insuranceFee + $vatAmount);
 
         $updatePayload = [
             'total_price' => $orderTotal,
@@ -1014,6 +1040,16 @@ class OrderController extends Controller
             $outrightDiscountPct = round(100 * ($onlineCheckoutDiscount / $catalogItemsSubtotal), 2);
         }
 
+        // Never expose kobo-level phantom discounts on shop receipts.
+        $orderTypeFinal = strtolower((string) ($order->order_type ?? ''));
+        if ($orderTypeFinal === 'shop' && $onlineCheckoutDiscount < 1.0) {
+            $onlineCheckoutDiscount = 0.0;
+            if ($catalogItemsSubtotal > 0.005) {
+                $itemsSubtotalAfterDiscount = round($catalogItemsSubtotal, 2);
+            }
+            $outrightDiscountPct = null;
+        }
+
         $baseData = [
             'id'               => $order->id,
             'order_number'     => $order->order_number,
@@ -1029,10 +1065,12 @@ class OrderController extends Controller
             'items'            => $items,
             'items_subtotal'   => round($itemsSubtotalAfterDiscount, 2),
             'catalog_items_subtotal' => $catalogItemsSubtotal > 0.005 ? round($catalogItemsSubtotal, 2) : null,
-            'online_checkout_discount_amount' => $onlineCheckoutDiscount > 0.005 ? round($onlineCheckoutDiscount, 2) : null,
+            'online_checkout_discount_amount' => $onlineCheckoutDiscount >= 1.0 ? round($onlineCheckoutDiscount, 2) : null,
             'outright_discount_percentage' => $outrightDiscountPct,
             'order_type'       => $order->order_type ?? null,
-            'product_price'    => Schema::hasColumn('orders', 'product_price') ? $order->product_price : null,
+            'product_price'    => Schema::hasColumn('orders', 'product_price') && $order->product_price !== null
+                ? round((float) $order->product_price, 2)
+                : null,
             'material_cost'    => Schema::hasColumn('orders', 'material_cost') ? $order->material_cost : null,
             'inspection_fee'   => Schema::hasColumn('orders', 'inspection_fee') ? $order->inspection_fee : null,
             'delivery_fee'     => $order->delivery_fee,

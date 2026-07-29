@@ -43,6 +43,7 @@ class CheckoutSettingsController extends Controller
             'installation_materials_cost' => (int) ($s->installation_materials_cost ?? 0),
             'installation_schedule_working_days' => (int) $s->installation_schedule_working_days,
             'installation_description' => (string) ($s->installation_description ?? ''),
+            'insurance_description' => (string) ($s->insurance_description ?? ''),
             'preview' => [
                 'delivery_estimate_label' => $window['label'],
                 'delivery_estimated_from' => $window['estimated_from'],
@@ -118,6 +119,7 @@ class CheckoutSettingsController extends Controller
                 'installation_materials_cost' => 'nullable|integer|min:0|max:100000000',
                 'installation_schedule_working_days' => 'nullable|integer|min:1|max:90',
                 'installation_description' => 'nullable|string|max:5000',
+                'insurance_description' => 'nullable|string|max:5000',
             ]);
 
             $s = CheckoutSetting::get($channel);
@@ -174,6 +176,11 @@ class CheckoutSettingsController extends Controller
             }
             if ($request->has('installation_description')) {
                 $s->installation_description = $request->installation_description;
+            }
+            if ($request->has('insurance_description')) {
+                if (\Illuminate\Support\Facades\Schema::hasColumn('checkout_settings', 'insurance_description')) {
+                    $s->insurance_description = $request->insurance_description;
+                }
             }
             if ($s->delivery_max_working_days < $s->delivery_min_working_days) {
                 $s->delivery_max_working_days = $s->delivery_min_working_days;

@@ -29,6 +29,7 @@ class CheckoutSetting extends Model
         'installation_materials_cost',
         'installation_schedule_working_days',
         'installation_description',
+        'insurance_description',
     ];
 
     protected $casts = [
@@ -92,6 +93,7 @@ class CheckoutSetting extends Model
                 'installation_materials_cost' => (int) config('checkout.installation_materials_cost', 0),
                 'installation_schedule_working_days' => (int) config('checkout.installation_schedule_working_days', 7),
                 'installation_description' => (string) config('checkout.installation_text', ''),
+                'insurance_description' => (string) config('checkout.insurance_text', ''),
             ]);
         }
 

@@ -108,6 +108,12 @@ class CartController extends Controller
                     'Installation will be carried out by our skilled technicians. You can choose to use our installers.'
                 );
             }
+            $insuranceText = trim((string) ($settings->insurance_description ?? ''));
+            if ($insuranceText === '') {
+                $insuranceText = (string) config('checkout.insurance_text',
+                    'Optional: add product insurance separately from installation. Fee is a percentage of Item Subtotal.'
+                );
+            }
             $vatPct = (float) ($settings->vat_percentage ?? config('checkout.vat_percentage', 7.5));
             $insPct = (float) ($settings->insurance_fee_percentage ?? config('checkout.insurance_fee_percentage', 3));
             $installationFlatAddon = (int) ($settings->installation_flat_addon ?? 0);
@@ -157,6 +163,11 @@ class CartController extends Controller
                             'insurance_fee_percentage' => $insPct,
                             'insurance_price' => $insurancePreview,
                             'estimated_date' => CheckoutPricing::installationEstimatedDate($settings),
+                        ],
+                        'insurance' => [
+                            'description' => $insuranceText,
+                            'fee_percentage' => $insPct,
+                            'price' => $insurancePreview,
                         ],
                         'totals' => [
                             'items_total' => 0,
@@ -304,6 +315,11 @@ class CartController extends Controller
                 'estimated_from' => $deliveryWindow['estimated_from'],
                 'estimated_to' => $deliveryWindow['estimated_to'],
             ];
+            $insurance = [
+                'description' => $insuranceText,
+                'fee_percentage' => $insPct,
+                'price' => $insurancePreview,
+            ];
 
             return response()->json([
                 'status'  => 'success',
@@ -317,6 +333,7 @@ class CartController extends Controller
                     'addresses' => $addresses,
                     'delivery' => $delivery,
                     'installation' => $installation,
+                    'insurance' => $insurance,
                     'totals' => [
                         'items_total' => $catalogItemsSubtotal,
                         'items_subtotal_before_discount' => $catalogItemsSubtotal,
