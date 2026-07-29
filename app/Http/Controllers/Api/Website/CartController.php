@@ -268,11 +268,13 @@ class CartController extends Controller
             // (independent of installation).
             $insurancePreview = CheckoutPricing::insuranceAmountFromPercent($catalogItemsSubtotal, 0.0, $insPct);
             $insuranceAmount = $includeInsurance ? $insurancePreview : 0;
-            $vatAmount = CheckoutPricing::vatAmount((float) $itemsSubtotalAfterDiscount, $vatPct);
             $taxableBase = (float) $itemsSubtotalAfterDiscount + (float) $deliveryFee;
             if ($includeInstallation) {
                 $taxableBase += (float) $installationFull + (float) $inspectionAmount;
             }
+            // Solar Store VAT applies to Total Amount (items + delivery + selected service fees).
+            // Insurance remains outside the VAT base and is added afterwards.
+            $vatAmount = CheckoutPricing::vatAmount($taxableBase, $vatPct);
             $grandTotal = (int) round($taxableBase + (float) $insuranceAmount + (float) $vatAmount);
 
             // 4) Addresses (+ contact name fallback to account holder)

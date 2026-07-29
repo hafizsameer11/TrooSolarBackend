@@ -226,8 +226,8 @@ class OrderController extends Controller
         $hasStoredProductPrice = Schema::hasColumn('orders', 'product_price') && $order->product_price !== null;
         $isShopOrder = strtolower((string) ($order->order_type ?? '')) === 'shop';
 
-        // Shop cart: mirror checkout. VAT is on items only — never reverse grand total ÷ 1.075
-        // (that invents phantom kobo like ₦0.23 when VAT was rounded to whole naira).
+        // Shop cart: mirror persisted checkout components instead of reverse-calculating
+        // from grand total (which can invent phantom kobo after whole-naira rounding).
         if ($isShopOrder || (! $isBuyNow && ($hasStoredProductPrice || $catalogItemsSubtotal > 0.005))) {
             if ($hasStoredProductPrice) {
                 $itemsAfter = round((float) $order->product_price, 2);
@@ -244,11 +244,12 @@ class OrderController extends Controller
                 $itemsAfter = round($catalogItemsSubtotal, 2);
                 $discount = 0.0;
             }
-            if ($vat <= 0.005 && $itemsAfter > 0) {
-                // Shop VAT is charged on discounted items only (not delivery/install).
-                $expectedVat = (float) CheckoutPricing::vatAmount($itemsAfter, $vatPct);
+            $sumBeforeVat = round($itemsAfter + $delivery + $installation + $material + $inspection, 2);
+            if ($vat <= 0.005 && $sumBeforeVat > 0) {
+                // Solar Store VAT applies to Total Amount; insurance is added after VAT.
+                $expectedVat = (float) CheckoutPricing::vatAmount($sumBeforeVat, $vatPct);
                 if ($storedTotal > 0) {
-                    $expectedTotal = round($itemsAfter + $delivery + $installation + $inspection + $insurance + $expectedVat, 2);
+                    $expectedTotal = round($sumBeforeVat + $insurance + $expectedVat, 2);
                     if (abs($storedTotal - $expectedTotal) < 1.0) {
                         $vat = $expectedVat;
                     }
@@ -256,7 +257,6 @@ class OrderController extends Controller
                     $vat = $expectedVat;
                 }
             }
-            $sumBeforeVat = round($itemsAfter + $delivery + $installation + $material + $inspection, 2);
             $grandTotal = $storedTotal > 0
                 ? $storedTotal
                 : round($sumBeforeVat + $vat + $insurance, 2);
@@ -325,7 +325,7 @@ class OrderController extends Controller
                 if (abs($storedTotal - ($itemsAfter + $fees + $expectedVat)) < 1.0) {
                     $vat = $expectedVat;
                 } elseif (abs($storedTotal - ($itemsAfter + $fees)) < 1.0 && $expectedVat > 0.005) {
-                    // Legacy rows: total_price stored pre-VAT while checkout charged VAT on items.
+                    // Legacy rows: total_price was stored before VAT.
                     $vat = $expectedVat;
                 }
             }
@@ -728,11 +728,12 @@ class OrderController extends Controller
         $insuranceFee = $includeInsurance
             ? (float) CheckoutPricing::insuranceAmountFromPercent($catalogItemsSubtotal, 0.0, $insPct)
             : 0.0;
-        $vatAmount = (float) CheckoutPricing::vatAmount((float) $itemsSubtotalAfterDiscount, $vatPct);
         $taxableBase = $itemsSubtotalAfterDiscount + $deliveryFee;
         if ($includeInstallation) {
             $taxableBase += $installationSumFull + $inspectionSum;
         }
+        // Solar Store VAT applies to Total Amount; insurance is added after VAT.
+        $vatAmount = (float) CheckoutPricing::vatAmount((float) $taxableBase, $vatPct);
         // Match cart checkout-summary: whole-naira grand total (what Flutterwave is charged).
         $orderTotal = (int) round($taxableBase + $insuranceFee + $vatAmount);
 

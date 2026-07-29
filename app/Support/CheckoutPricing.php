@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Models\Bundles;
+use App\Models\Category;
 use App\Models\CheckoutSetting;
 use App\Models\DeliveryLocation;
 use App\Models\State;
@@ -91,7 +92,7 @@ class CheckoutPricing
     }
 
     /**
-     * Sum admin category inspection fees for distinct product categories in the cart.
+     * Sum admin category inspection fees for distinct product/bundle categories.
      */
     public static function inspectionTotalFromCartItems(Collection $cartItems, CheckoutSetting $settings): int
     {
@@ -99,7 +100,8 @@ class CheckoutPricing
     }
 
     /**
-     * Collect unique Solar Shop fee keys from cart products = stringified category_id.
+     * Collect unique Solar Shop fee keys from cart products and bundles.
+     * Products use category_id; bundles map bundle_type to their catalog category.
      * (Buy Now keeps inferProductFeeCategory separately — do not use it here.)
      *
      * @return array<int, string>
@@ -107,16 +109,54 @@ class CheckoutPricing
     public static function shopCartFeeCategoryKeys(Collection $cartItems): array
     {
         $keys = [];
+        $bundleCategoryIds = null;
+
         foreach ($cartItems as $item) {
             $model = $item->itemable ?? null;
-            if (! $model instanceof \App\Models\Product) {
+
+            if ($model instanceof \App\Models\Product) {
+                $categoryId = (int) ($model->category_id ?? 0);
+                if ($categoryId <= 0) {
+                    $model->loadMissing('category');
+                    $categoryId = (int) ($model->category?->id ?? 0);
+                }
+                if ($categoryId > 0) {
+                    $keys[] = (string) $categoryId;
+                }
                 continue;
             }
-            $categoryId = (int) ($model->category_id ?? 0);
-            if ($categoryId <= 0) {
-                $model->loadMissing('category');
-                $categoryId = (int) ($model->category?->id ?? 0);
+
+            if (! $model instanceof Bundles) {
+                continue;
             }
+
+            // Bundles do not have category_id. Resolve the same virtual catalog
+            // categories used by the storefront: Solar Bundles / Inverter Bundles.
+            $bundleCategoryIds ??= Category::query()
+                ->get(['id', 'title'])
+                ->mapWithKeys(static function ($category) {
+                    $key = strtolower(preg_replace('/[^a-z0-9]+/i', '', (string) $category->title));
+
+                    return [$key => (int) $category->id];
+                })
+                ->all();
+
+            $bundleType = strtolower(preg_replace(
+                '/[^a-z0-9]+/i',
+                '',
+                (string) ($model->bundle_type ?? '')
+            ));
+            $hasInverter = str_contains($bundleType, 'inverter');
+            $hasBattery = str_contains($bundleType, 'battery')
+                || str_contains($bundleType, 'batteries');
+            $categoryId = 0;
+
+            if (str_contains($bundleType, 'solar') && $hasInverter && $hasBattery) {
+                $categoryId = (int) ($bundleCategoryIds['solarbundles'] ?? 0);
+            } elseif ($hasInverter && $hasBattery) {
+                $categoryId = (int) ($bundleCategoryIds['inverterbundles'] ?? 0);
+            }
+
             if ($categoryId > 0) {
                 $keys[] = (string) $categoryId;
             }
@@ -126,7 +166,8 @@ class CheckoutPricing
     }
 
     /**
-     * Solar Shop cart fees: sum admin shop-channel fees for each distinct product category_id.
+     * Solar Shop cart fees: sum admin shop-channel fees for each distinct
+     * product category_id or resolved bundle catalog category.
      *
      * @return array{
      *   category_keys: array<int, string>,
