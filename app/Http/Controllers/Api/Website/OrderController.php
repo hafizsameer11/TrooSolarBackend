@@ -227,7 +227,7 @@ class OrderController extends Controller
         $isShopOrder = strtolower((string) ($order->order_type ?? '')) === 'shop';
 
         // Shop cart: mirror persisted checkout components instead of reverse-calculating
-        // from grand total (which can invent phantom kobo after whole-naira rounding).
+        // from grand total, which can invent phantom kobo.
         if ($isShopOrder || (! $isBuyNow && ($hasStoredProductPrice || $catalogItemsSubtotal > 0.005))) {
             if ($hasStoredProductPrice) {
                 $itemsAfter = round((float) $order->product_price, 2);
@@ -734,8 +734,8 @@ class OrderController extends Controller
         }
         // Solar Store VAT applies to Total Amount; insurance is added after VAT.
         $vatAmount = (float) CheckoutPricing::vatAmount((float) $taxableBase, $vatPct);
-        // Match cart checkout-summary: whole-naira grand total (what Flutterwave is charged).
-        $orderTotal = (int) round($taxableBase + $insuranceFee + $vatAmount);
+        // Match cart checkout-summary and Flutterwave to two decimal places.
+        $orderTotal = round($taxableBase + $insuranceFee + $vatAmount, 2);
 
         $updatePayload = [
             'total_price' => $orderTotal,

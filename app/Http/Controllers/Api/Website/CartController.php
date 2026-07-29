@@ -140,7 +140,7 @@ class CartController extends Controller
                 $insuranceAmount = 0;
                 $vatAmount = CheckoutPricing::vatAmount(0.0, $vatPct);
                 $taxableBase = (float) $deliveryFee;
-                $grandTotal = (int) round($taxableBase + (float) $vatAmount);
+                $grandTotal = round($taxableBase + (float) $vatAmount, 2);
 
                 return response()->json([
                     'status'  => 'success',
@@ -186,7 +186,7 @@ class CartController extends Controller
                             'insurance_fee_percentage' => $insPct,
                             'vat_percentage' => $vatPct,
                             'vat_amount' => $vatAmount,
-                            'taxable_base' => (int) round($taxableBase),
+                            'taxable_base' => round($taxableBase, 2),
                             'grand_total' => $grandTotal,
                             'include_installation' => $includeInstallation,
                             'include_insurance' => $includeInsurance,
@@ -275,7 +275,7 @@ class CartController extends Controller
             // Solar Store VAT applies to Total Amount (items + delivery + selected service fees).
             // Insurance remains outside the VAT base and is added afterwards.
             $vatAmount = CheckoutPricing::vatAmount($taxableBase, $vatPct);
-            $grandTotal = (int) round($taxableBase + (float) $insuranceAmount + (float) $vatAmount);
+            $grandTotal = round($taxableBase + (float) $insuranceAmount + (float) $vatAmount, 2);
 
             // 4) Addresses (+ contact name fallback to account holder)
             $viewer = Auth::user();
@@ -353,7 +353,7 @@ class CartController extends Controller
                         'insurance_fee_percentage' => $insPct,
                         'vat_percentage' => $vatPct,
                         'vat_amount' => $vatAmount,
-                        'taxable_base' => (int) round($taxableBase),
+                        'taxable_base' => round($taxableBase, 2),
                         'grand_total' => $grandTotal,
                         'include_installation' => $includeInstallation,
                         'include_insurance' => $includeInsurance,

@@ -82,13 +82,13 @@ class CheckoutPricing
      * Insurance as % of items subtotal only (installation / inspection excluded).
      * $installationFull is retained for call-site compatibility and ignored.
      */
-    public static function insuranceAmountFromPercent(float $itemsSubtotal, float $installationFull, float $percent): int
+    public static function insuranceAmountFromPercent(float $itemsSubtotal, float $installationFull, float $percent): float
     {
         if ($percent <= 0) {
-            return 0;
+            return 0.0;
         }
 
-        return (int) round(max(0, $itemsSubtotal) * ($percent / 100.0));
+        return round(max(0, $itemsSubtotal) * ($percent / 100.0), 2);
     }
 
     /**
@@ -206,13 +206,13 @@ class CheckoutPricing
         ];
     }
 
-    public static function vatAmount(float $taxableBase, float $vatPercent): int
+    public static function vatAmount(float $taxableBase, float $vatPercent): float
     {
         if ($vatPercent <= 0 || $taxableBase <= 0) {
-            return 0;
+            return 0.0;
         }
 
-        return (int) round($taxableBase * ($vatPercent / 100.0));
+        return round($taxableBase * ($vatPercent / 100.0), 2);
     }
 
     /**
