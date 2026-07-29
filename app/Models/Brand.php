@@ -13,7 +13,8 @@ class Brand extends Model
     protected $fillable=[
         'title',
         'icon',
-        'category_id'
+        'category_id',
+        'sort_order',
     ];
 
     public function category(){

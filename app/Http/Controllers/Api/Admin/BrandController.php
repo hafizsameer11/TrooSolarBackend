@@ -12,6 +12,7 @@ use Illuminate\Support\Str;
 use App\Models\Product;
 use Exception;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 
 class BrandController extends Controller
 {
@@ -68,8 +69,13 @@ class BrandController extends Controller
     public function index()
     {
         try {
-            $brands = Brand::with('categories')
-                ->orderBy('title')
+            $query = Brand::with('categories');
+            if (Schema::hasColumn('brands', 'sort_order')) {
+                $query->orderByRaw('COALESCE(sort_order, id) asc');
+            } else {
+                $query->orderBy('title');
+            }
+            $brands = $query
                 ->get()
                 ->map(fn (Brand $brand) => $this->formatBrand($brand))
                 ->values();
@@ -78,6 +84,39 @@ class BrandController extends Controller
         } catch (Exception $e) {
             Log::error('Error fetching brands: ' . $e->getMessage());
             return ResponseHelper::error('Something went wrong.', 500);
+        }
+    }
+
+    /**
+     * POST /brands/reorder
+     * Body: { "orders": [ { "id": 5, "sort_order": 1 }, ... ] }
+     */
+    public function reorder(Request $request)
+    {
+        try {
+            if (! Schema::hasColumn('brands', 'sort_order')) {
+                return ResponseHelper::error('Brand ordering is not available yet. Run migrations.', 500);
+            }
+
+            $entries = $request->input('orders', []);
+            if (! is_array($entries) || empty($entries)) {
+                return ResponseHelper::error('Invalid payload.', 422);
+            }
+
+            foreach ($entries as $entry) {
+                $id = $entry['id'] ?? null;
+                $order = $entry['sort_order'] ?? null;
+                if ($id === null || $order === null) {
+                    continue;
+                }
+                Brand::where('id', (int) $id)->update(['sort_order' => (int) $order]);
+            }
+
+            return ResponseHelper::success(null, 'Brand order updated.');
+        } catch (Exception $e) {
+            Log::error('Error reordering brands: ' . $e->getMessage());
+
+            return ResponseHelper::error('Failed to reorder brands.', 500, $e->getMessage());
         }
     }
 
@@ -98,6 +137,11 @@ class BrandController extends Controller
             }
 
             $brand = Brand::create($data);
+            if (Schema::hasColumn('brands', 'sort_order') && ($brand->sort_order === null)) {
+                $max = (int) Brand::query()->max('sort_order');
+                $brand->sort_order = $max + 1;
+                $brand->save();
+            }
             $this->syncBrandCategories($brand, $this->resolveCategoryIds($request));
 
             return ResponseHelper::success($this->formatBrand($brand->fresh()), 'Brand created.', 201);
@@ -203,7 +247,7 @@ class BrandController extends Controller
             $this->syncMissingBrandTagsForCategory((int) $categoryId);
 
             // Return brands linked to this category (pivot or legacy) or with products in category
-            $brands = Brand::with('categories')
+            $query = Brand::with('categories')
                 ->where(function ($q) use ($categoryId) {
                     $q->where('category_id', $categoryId)
                         ->orWhereHas('categories', function ($cq) use ($categoryId) {
@@ -213,7 +257,13 @@ class BrandController extends Controller
                             $pq->where('category_id', $categoryId)
                                 ->whereRaw('CAST(stock AS DECIMAL(10,2)) > 0');
                         });
-                })
+                });
+            if (Schema::hasColumn('brands', 'sort_order')) {
+                $query->orderByRaw('COALESCE(sort_order, id) asc');
+            } else {
+                $query->orderBy('title');
+            }
+            $brands = $query
                 ->get()
                 ->unique('id')
                 ->values()

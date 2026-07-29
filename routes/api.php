@@ -175,6 +175,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/categories/{category}/brands/{brand}/products/{product}', [ProductController::class, 'showProductByCategory']);
     Route::get('/cart/checkout-summary', [CartController::class, 'checkoutSummary']);
     // categories/{categoryId}/brands/{brandIds}/product/{productId}
+    // Brand ordering (drag & drop) — register before apiResource so "reorder" is not treated as an id
+    Route::post('brands/reorder', [BrandController::class, 'reorder']);
     Route::apiResource('brands', BrandController::class);
     Route::apiResource('products', ProductController::class);
     Route::post('products/{product}/update', [ProductController::class, 'update'])
