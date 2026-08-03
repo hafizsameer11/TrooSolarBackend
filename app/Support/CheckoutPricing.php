@@ -6,6 +6,7 @@ use App\Models\Bundles;
 use App\Models\Category;
 use App\Models\CheckoutSetting;
 use App\Models\DeliveryLocation;
+use App\Models\Product;
 use App\Models\State;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -166,8 +167,11 @@ class CheckoutPricing
     }
 
     /**
-     * Solar Shop cart fees: sum admin shop-channel fees for each distinct
-     * product category_id or resolved bundle catalog category.
+     * Solar Shop cart fees.
+     *
+     * Delivery uses product-type rules (panel tiers, inverter waiver, etc.).
+     * Inspection is one flat fee for the whole cart (not per category).
+     * Installation / materials still sum per distinct category.
      *
      * @return array{
      *   category_keys: array<int, string>,
@@ -180,19 +184,13 @@ class CheckoutPricing
     public static function shopCartCategoryFees(Collection $cartItems, CheckoutSetting $settings): array
     {
         $keys = self::shopCartFeeCategoryKeys($cartItems);
-        $delivery = $keys !== []
-            ? (float) $settings->sumProductCategoryFees($keys, 'delivery')
-            : 0.0;
-        if ($delivery <= 0) {
-            $delivery = (float) ($settings->delivery_fee ?? 0);
-        }
+
+        $delivery = self::shopCartDeliveryFee($cartItems, $settings);
 
         $installation = $keys !== []
             ? (float) $settings->sumProductCategoryFees($keys, 'installation')
             : 0.0;
-        $inspection = $keys !== []
-            ? (float) $settings->sumProductCategoryFees($keys, 'inspection')
-            : 0.0;
+        $inspection = self::shopFlatInspectionFee($settings);
         $materials = $keys !== []
             ? (float) $settings->sumProductCategoryFees($keys, 'materials')
             : 0.0;
@@ -204,6 +202,321 @@ class CheckoutPricing
             'inspection' => round($inspection, 2),
             'materials' => round($materials, 2),
         ];
+    }
+
+    /**
+     * One flat inspection fee for Solar Shop checkout (not summed per product category).
+     */
+    public static function shopFlatInspectionFee(CheckoutSetting $settings): float
+    {
+        $fees = $settings->normalizedCategoryInspectionFees(CheckoutSetting::CHANNEL_SHOP);
+        $positive = array_filter(
+            array_map(static fn ($v) => (float) $v, $fees),
+            static fn ($v) => $v > 0
+        );
+
+        if ($positive === []) {
+            return 0.0;
+        }
+
+        // Admin may store the flat fee on any category row; use the configured value.
+        return round(max($positive), 2);
+    }
+
+    /**
+     * Solar Shop delivery fee rules:
+     * - Solar panels: tiered by total panel qty (×1 for 1–14, ×2 for 15–28, ×3 for 29–42, …).
+     * - Battery: individual fee (unchanged when combined with panels).
+     * - Inverter: fee only when ordered alone (no panels or battery in cart).
+     * - Streetlights: individual fee.
+     * - All-in-one: free with solar panels; individual fee when alone.
+     * - Other categories: configured per-category delivery fee (once per category).
+     */
+    public static function shopCartDeliveryFee(Collection $cartItems, CheckoutSetting $settings): float
+    {
+        $analysis = self::analyzeShopCartContents($cartItems);
+        $delivery = 0.0;
+
+        if ($analysis['panel_qty'] > 0) {
+            $panelCategoryId = $analysis['panel_category_id']
+                ?? self::findShopCategoryIdByTitlePatterns(['solar panel', 'solar panels']);
+            $basePanelFee = self::shopCategoryDeliveryFee($settings, $panelCategoryId);
+            if ($basePanelFee <= 0) {
+                $basePanelFee = (float) ($settings->delivery_fee ?? 0);
+            }
+            $tier = (int) max(1, ceil($analysis['panel_qty'] / 14));
+            $delivery += $basePanelFee * $tier;
+        }
+
+        if ($analysis['has_battery']) {
+            $batteryCategoryId = $analysis['battery_category_id']
+                ?? self::findShopCategoryIdByTitlePatterns(['lithium', 'battery', 'batteries']);
+            $delivery += self::shopCategoryDeliveryFee($settings, $batteryCategoryId);
+        }
+
+        if (
+            $analysis['has_inverter']
+            && ! $analysis['has_battery']
+            && $analysis['panel_qty'] <= 0
+        ) {
+            $inverterCategoryId = $analysis['inverter_category_id']
+                ?? self::findShopCategoryIdByTitlePatterns(['inverter']);
+            $delivery += self::shopCategoryDeliveryFee($settings, $inverterCategoryId);
+        }
+
+        if ($analysis['has_streetlight']) {
+            $streetlightCategoryId = $analysis['streetlight_category_id']
+                ?? self::findShopCategoryIdByTitlePatterns(['streetlight', 'street light', 'street-light']);
+            $delivery += self::shopCategoryDeliveryFee($settings, $streetlightCategoryId);
+        }
+
+        if ($analysis['has_all_in_one'] && $analysis['panel_qty'] <= 0) {
+            $aioCategoryId = $analysis['all_in_one_category_id']
+                ?? self::findShopCategoryIdByTitlePatterns(['all in one', 'all-in-one', 'aio']);
+            $delivery += self::shopCategoryDeliveryFee($settings, $aioCategoryId);
+        }
+
+        foreach ($analysis['other_category_ids'] as $categoryId) {
+            $delivery += self::shopCategoryDeliveryFee($settings, $categoryId);
+        }
+
+        return round($delivery, 2);
+    }
+
+    /**
+     * @return array{
+     *   panel_qty: int,
+     *   has_battery: bool,
+     *   has_inverter: bool,
+     *   has_streetlight: bool,
+     *   has_all_in_one: bool,
+     *   panel_category_id: ?int,
+     *   battery_category_id: ?int,
+     *   inverter_category_id: ?int,
+     *   streetlight_category_id: ?int,
+     *   all_in_one_category_id: ?int,
+     *   other_category_ids: array<int, int>
+     * }
+     */
+    public static function analyzeShopCartContents(Collection $cartItems): array
+    {
+        $result = [
+            'panel_qty' => 0,
+            'has_battery' => false,
+            'has_inverter' => false,
+            'has_streetlight' => false,
+            'has_all_in_one' => false,
+            'panel_category_id' => null,
+            'battery_category_id' => null,
+            'inverter_category_id' => null,
+            'streetlight_category_id' => null,
+            'all_in_one_category_id' => null,
+            'other_category_ids' => [],
+        ];
+
+        foreach ($cartItems as $item) {
+            $qty = max(1, (int) ($item->quantity ?? 1));
+            $model = $item->itemable ?? null;
+
+            if ($model instanceof Product) {
+                $model->loadMissing('category');
+                $categoryId = (int) ($model->category_id ?? $model->category?->id ?? 0);
+                $categoryTitle = strtolower(trim((string) ($model->category?->title ?? '')));
+                $productTitle = strtolower(trim((string) ($model->title ?? '')));
+
+                if (self::isShopSolarPanelItem($categoryTitle, $productTitle)) {
+                    $result['panel_qty'] += $qty;
+                    $result['panel_category_id'] ??= $categoryId > 0 ? $categoryId : null;
+                    continue;
+                }
+
+                if (self::isShopBatteryItem($categoryTitle, $productTitle)) {
+                    $result['has_battery'] = true;
+                    $result['battery_category_id'] ??= $categoryId > 0 ? $categoryId : null;
+                    continue;
+                }
+
+                if (self::isShopStreetlightItem($categoryTitle, $productTitle)) {
+                    $result['has_streetlight'] = true;
+                    $result['streetlight_category_id'] ??= $categoryId > 0 ? $categoryId : null;
+                    continue;
+                }
+
+                if (self::isShopAllInOneItem($categoryTitle, $productTitle)) {
+                    $result['has_all_in_one'] = true;
+                    $result['all_in_one_category_id'] ??= $categoryId > 0 ? $categoryId : null;
+                    continue;
+                }
+
+                if (self::isShopInverterItem($categoryTitle, $productTitle)) {
+                    $result['has_inverter'] = true;
+                    $result['inverter_category_id'] ??= $categoryId > 0 ? $categoryId : null;
+                    continue;
+                }
+
+                if ($categoryId > 0) {
+                    $result['other_category_ids'][$categoryId] = $categoryId;
+                }
+
+                continue;
+            }
+
+            if (! $model instanceof Bundles) {
+                continue;
+            }
+
+            $bundleType = strtolower(preg_replace('/[^a-z0-9]+/i', '', (string) ($model->bundle_type ?? '')));
+            $bundleTitle = strtolower(trim((string) ($model->title ?? '')));
+            $hasSolar = str_contains($bundleType, 'solar') || str_contains($bundleType, 'panel');
+            $hasInverter = str_contains($bundleType, 'inverter');
+            $hasBattery = str_contains($bundleType, 'battery') || str_contains($bundleType, 'batteries');
+
+            if ($hasSolar) {
+                $result['panel_qty'] += self::bundleSolarPanelQuantity($model, $qty);
+            }
+
+            if ($hasBattery) {
+                $result['has_battery'] = true;
+            }
+
+            if (self::isShopStreetlightItem('', $bundleTitle)) {
+                $result['has_streetlight'] = true;
+            }
+
+            if (self::isShopAllInOneItem('', $bundleTitle) && ! $hasSolar) {
+                $result['has_all_in_one'] = true;
+            }
+
+            if ($hasInverter) {
+                $result['has_inverter'] = true;
+            }
+        }
+
+        return $result;
+    }
+
+    private static function shopCategoryDeliveryFee(CheckoutSetting $settings, ?int $categoryId): float
+    {
+        if (! $categoryId || $categoryId <= 0) {
+            return 0.0;
+        }
+
+        return (float) $settings->deliveryFeeForCategory((string) $categoryId);
+    }
+
+    private static function findShopCategoryIdByTitlePatterns(array $patterns): ?int
+    {
+        $categories = Category::query()->get(['id', 'title']);
+
+        foreach ($patterns as $pattern) {
+            $needle = strtolower(trim($pattern));
+            if ($needle === '') {
+                continue;
+            }
+
+            foreach ($categories as $category) {
+                $title = strtolower(trim((string) ($category->title ?? '')));
+                if ($title !== '' && str_contains($title, $needle)) {
+                    return (int) $category->id;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static function bundleSolarPanelQuantity(Bundles $bundle, int $cartQty): int
+    {
+        $bundle->loadMissing('bundleMaterials.material');
+        $perBundle = 0;
+
+        foreach ($bundle->bundleMaterials as $bundleMaterial) {
+            $name = strtolower((string) ($bundleMaterial->material->name ?? ''));
+            if (
+                str_contains($name, 'solar panel')
+                || (str_contains($name, 'panel') && str_contains($name, 'solar'))
+            ) {
+                $perBundle += max(1, (int) ($bundleMaterial->quantity ?? 1));
+            }
+        }
+
+        if ($perBundle <= 0) {
+            $bundleType = strtolower(preg_replace('/[^a-z0-9]+/i', '', (string) ($bundle->bundle_type ?? '')));
+            if (str_contains($bundleType, 'solar') || str_contains($bundleType, 'panel')) {
+                $perBundle = 1;
+            }
+        }
+
+        return $perBundle * max(1, $cartQty);
+    }
+
+    private static function isShopSolarPanelItem(string $categoryTitle, string $productTitle): bool
+    {
+        $isPanelCategory = str_contains($categoryTitle, 'panel') || str_contains($categoryTitle, 'pv');
+        $isPanelTitle = str_contains($productTitle, 'panel') || str_contains($productTitle, 'pv');
+        $isInverter = str_contains($categoryTitle, 'inverter') || str_contains($productTitle, 'inverter');
+        $isBattery = str_contains($categoryTitle, 'battery')
+            || str_contains($categoryTitle, 'batteries')
+            || str_contains($categoryTitle, 'lithium')
+            || str_contains($productTitle, 'battery')
+            || str_contains($productTitle, 'batteries');
+
+        return ($isPanelCategory || $isPanelTitle) && ! $isInverter && ! $isBattery;
+    }
+
+    private static function isShopBatteryItem(string $categoryTitle, string $productTitle): bool
+    {
+        if (self::isShopAllInOneItem($categoryTitle, $productTitle)) {
+            return false;
+        }
+
+        $isBatteryCategory = str_contains($categoryTitle, 'battery')
+            || str_contains($categoryTitle, 'batteries')
+            || str_contains($categoryTitle, 'lithium')
+            || str_contains($categoryTitle, 'rack');
+        $isBatteryTitle = str_contains($productTitle, 'battery')
+            || str_contains($productTitle, 'batteries')
+            || str_contains($productTitle, 'lithium')
+            || str_contains($productTitle, 'rack');
+        $isKwhTitle = str_contains($productTitle, 'kwh');
+        $isPanel = self::isShopSolarPanelItem($categoryTitle, $productTitle);
+
+        return ($isBatteryCategory || $isBatteryTitle || $isKwhTitle) && ! $isPanel;
+    }
+
+    private static function isShopInverterItem(string $categoryTitle, string $productTitle): bool
+    {
+        $isInverterCategory = str_contains($categoryTitle, 'inverter');
+        $isInverterTitle = str_contains($productTitle, 'inverter');
+        $isPanel = self::isShopSolarPanelItem($categoryTitle, $productTitle);
+        $isBattery = self::isShopBatteryItem($categoryTitle, $productTitle);
+
+        return ($isInverterCategory || $isInverterTitle) && ! $isPanel && ! $isBattery;
+    }
+
+    private static function isShopStreetlightItem(string $categoryTitle, string $productTitle): bool
+    {
+        return str_contains($categoryTitle, 'streetlight')
+            || str_contains($categoryTitle, 'street light')
+            || str_contains($categoryTitle, 'street-light')
+            || str_contains($productTitle, 'streetlight')
+            || str_contains($productTitle, 'street light')
+            || str_contains($productTitle, 'street-light');
+    }
+
+    private static function isShopAllInOneItem(string $categoryTitle, string $productTitle): bool
+    {
+        return str_contains($categoryTitle, 'all in one')
+            || str_contains($categoryTitle, 'all-in-one')
+            || str_contains($categoryTitle, 'aio')
+            || str_contains($productTitle, 'all in one')
+            || str_contains($productTitle, 'all-in-one')
+            || str_contains($productTitle, 'aio')
+            || (
+                str_contains($productTitle, 'kva')
+                && str_contains($productTitle, 'kwh')
+                && ! str_contains($productTitle, 'inverter')
+            );
     }
 
     public static function vatAmount(float $taxableBase, float $vatPercent): float
