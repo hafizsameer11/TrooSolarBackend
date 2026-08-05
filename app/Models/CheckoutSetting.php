@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\ShopQuantityFeeTiers;
 use Illuminate\Database\Eloquent\Model;
 
 class CheckoutSetting extends Model
@@ -19,6 +20,7 @@ class CheckoutSetting extends Model
         'category_installation_fees',
         'category_materials_fees',
         'category_inspection_fees',
+        'shop_quantity_fee_tiers',
         'own_installer_include_inspection',
         'delivery_min_working_days',
         'delivery_max_working_days',
@@ -38,6 +40,7 @@ class CheckoutSetting extends Model
         'category_installation_fees' => 'array',
         'category_materials_fees' => 'array',
         'category_inspection_fees' => 'array',
+        'shop_quantity_fee_tiers' => 'array',
         'own_installer_include_inspection' => 'boolean',
         'delivery_min_working_days' => 'integer',
         'delivery_max_working_days' => 'integer',
@@ -315,6 +318,18 @@ class CheckoutSetting extends Model
     public function normalizedCategoryInspectionFees(?string $channel = null): array
     {
         return $this->normalizedCategoryFeeMap('category_inspection_fees', 0, $channel);
+    }
+
+    /**
+     * @return array<string, array<int, array{min: int, max: int|null, amount: float}>>
+     */
+    public function normalizedShopQuantityFeeTiers(): array
+    {
+        $stored = is_array($this->shop_quantity_fee_tiers ?? null)
+            ? $this->shop_quantity_fee_tiers
+            : null;
+
+        return ShopQuantityFeeTiers::normalizeMap($stored);
     }
 
     private function normalizedCategoryFeeMap(

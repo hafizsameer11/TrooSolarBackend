@@ -6,6 +6,7 @@ use App\Helpers\ResponseHelper;
 use App\Http\Controllers\Controller;
 use App\Models\CheckoutSetting;
 use App\Support\CheckoutPricing;
+use App\Support\ShopQuantityFeeTiers;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -32,6 +33,9 @@ class CheckoutSettingsController extends Controller
             'category_installation_fees' => $s->normalizedCategoryInstallationFees($channel),
             'category_materials_fees' => $s->normalizedCategoryMaterialsFees($channel),
             'category_inspection_fees' => $s->normalizedCategoryInspectionFees($channel),
+            'shop_quantity_fee_tiers' => $channel === CheckoutSetting::CHANNEL_SHOP
+                ? $s->normalizedShopQuantityFeeTiers()
+                : ShopQuantityFeeTiers::defaultTierMap(),
             'product_categories' => $categoryDefs,
             'delivery_min_working_days' => (int) $s->delivery_min_working_days,
             'delivery_max_working_days' => (int) $s->delivery_max_working_days,
@@ -110,6 +114,8 @@ class CheckoutSettingsController extends Controller
                 'category_materials_fees.*' => 'nullable|integer|min:0|max:100000000',
                 'category_inspection_fees' => 'nullable|array',
                 'category_inspection_fees.*' => 'nullable|integer|min:0|max:100000000',
+                'shop_quantity_fee_tiers' => 'nullable|array',
+                'shop_quantity_fee_tiers.*' => 'nullable|array',
                 'delivery_min_working_days' => 'nullable|integer|min:1|max:90',
                 'delivery_max_working_days' => 'nullable|integer|min:1|max:90',
                 'insurance_fee' => 'nullable|integer|min:0|max:100000000',
@@ -148,6 +154,15 @@ class CheckoutSettingsController extends Controller
                 $s->category_inspection_fees = $this->normalizeCategoryFeePayload(
                     $request->category_inspection_fees,
                     $categoryKeys
+                );
+            }
+            if (
+                $channel === CheckoutSetting::CHANNEL_SHOP
+                && $request->has('shop_quantity_fee_tiers')
+                && is_array($request->shop_quantity_fee_tiers)
+            ) {
+                $s->shop_quantity_fee_tiers = ShopQuantityFeeTiers::sanitizePayload(
+                    $request->shop_quantity_fee_tiers
                 );
             }
             if ($request->has('delivery_min_working_days')) {
