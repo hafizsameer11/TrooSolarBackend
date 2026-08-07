@@ -200,6 +200,138 @@ class CheckoutPricing
             'installation' => round($installation, 2),
             'inspection' => round($inspection, 2),
             'materials' => round($materials, 2),
+            'breakdown' => self::shopCartFeeBreakdown($cartItems, $settings),
+        ];
+    }
+
+    /**
+     * Detailed fee breakdown for checkout UI (quantities, tier labels, amounts).
+     *
+     * @return array{
+     *   quantities: array<string, int>,
+     *   delivery_lines: array<int, array{label: string, quantity: int, amount: float}>,
+     *   installation_lines: array<int, array{label: string, quantity: int, amount: float}>,
+     *   delivery_total: float,
+     *   installation_total: float
+     * }
+     */
+    public static function shopCartFeeBreakdown(Collection $cartItems, CheckoutSetting $settings): array
+    {
+        $analysis = self::analyzeShopCartContents($cartItems);
+        $tierMap = $settings->normalizedShopQuantityFeeTiers();
+
+        $inverterQty = (int) $analysis['inverter_qty'];
+        $batteryQty = (int) $analysis['battery_qty'];
+        $inverterInstallQty = $inverterQty;
+        $batteryInstallQty = $batteryQty;
+        if ($inverterQty >= 4 && $batteryQty === 1) {
+            $inverterInstallQty = 3;
+        }
+        if ($batteryQty >= 4 && $inverterQty === 1) {
+            $batteryInstallQty = 3;
+        }
+
+        $deliveryLines = [];
+        $installationLines = [];
+
+        $addLine = static function (array &$lines, string $label, int $qty, float $amount): void {
+            if ($qty <= 0) {
+                return;
+            }
+            $lines[] = ['label' => $label, 'quantity' => $qty, 'amount' => round($amount, 2)];
+        };
+
+        if ($analysis['panel_delivery_qty'] > 0) {
+            $amount = ShopQuantityFeeTiers::feeForQuantity(
+                $tierMap[ShopQuantityFeeTiers::KEY_PANEL_DELIVERY] ?? [],
+                $analysis['panel_delivery_qty']
+            );
+            $addLine($deliveryLines, 'Solar panel delivery', $analysis['panel_delivery_qty'], $amount);
+        }
+
+        if ($analysis['inverter_qty'] > 0) {
+            $amount = ShopQuantityFeeTiers::feeForQuantity(
+                $tierMap[ShopQuantityFeeTiers::KEY_INVERTER_DELIVERY] ?? [],
+                $analysis['inverter_qty']
+            );
+            $addLine($deliveryLines, 'Inverter delivery', $analysis['inverter_qty'], $amount);
+        }
+
+        if ($analysis['battery_qty'] > 0) {
+            $amount = ShopQuantityFeeTiers::feeForQuantity(
+                $tierMap[ShopQuantityFeeTiers::KEY_BATTERY_DELIVERY] ?? [],
+                $analysis['battery_qty']
+            );
+            $addLine($deliveryLines, 'Battery delivery', $analysis['battery_qty'], $amount);
+        }
+
+        foreach ($analysis['category_quantities'] as $categoryId => $categoryQty) {
+            $key = ShopQuantityFeeTiers::categoryDeliveryKey((int) $categoryId);
+            $amount = ShopQuantityFeeTiers::feeForQuantity($tierMap[$key] ?? [], (int) $categoryQty);
+            $label = trim((string) ($analysis['category_labels'][$categoryId] ?? 'Category #'.$categoryId));
+            $addLine($deliveryLines, $label.' delivery', (int) $categoryQty, $amount);
+        }
+
+        if ($analysis['panel_install_qty'] > 0) {
+            $amount = ShopQuantityFeeTiers::feeForQuantity(
+                $tierMap[ShopQuantityFeeTiers::KEY_PANEL_INSTALLATION] ?? [],
+                $analysis['panel_install_qty']
+            );
+            $addLine($installationLines, 'Solar panel installation', $analysis['panel_install_qty'], $amount);
+        }
+
+        if ($analysis['streetlight_qty'] > 0) {
+            $amount = ShopQuantityFeeTiers::feeForQuantity(
+                $tierMap[ShopQuantityFeeTiers::KEY_STREETLIGHT_INSTALLATION] ?? [],
+                $analysis['streetlight_qty']
+            );
+            $addLine($installationLines, 'Solar streetlight installation', $analysis['streetlight_qty'], $amount);
+        }
+
+        if ($inverterInstallQty > 0) {
+            $amount = ShopQuantityFeeTiers::feeForQuantity(
+                $tierMap[ShopQuantityFeeTiers::KEY_INVERTER_INSTALLATION] ?? [],
+                $inverterInstallQty
+            );
+            $label = $inverterInstallQty !== $inverterQty
+                ? 'Inverter installation (adjusted)'
+                : 'Inverter installation';
+            $addLine($installationLines, $label, $inverterInstallQty, $amount);
+        }
+
+        if ($batteryInstallQty > 0) {
+            $amount = ShopQuantityFeeTiers::feeForQuantity(
+                $tierMap[ShopQuantityFeeTiers::KEY_BATTERY_INSTALLATION] ?? [],
+                $batteryInstallQty
+            );
+            $label = $batteryInstallQty !== $batteryQty
+                ? 'Battery installation (adjusted)'
+                : 'Battery installation';
+            $addLine($installationLines, $label, $batteryInstallQty, $amount);
+        }
+
+        foreach ($analysis['category_quantities'] as $categoryId => $categoryQty) {
+            $key = ShopQuantityFeeTiers::categoryInstallationKey((int) $categoryId);
+            $amount = ShopQuantityFeeTiers::feeForQuantity($tierMap[$key] ?? [], (int) $categoryQty);
+            $label = trim((string) ($analysis['category_labels'][$categoryId] ?? 'Category #'.$categoryId));
+            $addLine($installationLines, $label.' installation', (int) $categoryQty, $amount);
+        }
+
+        $deliveryTotal = round(array_sum(array_column($deliveryLines, 'amount')), 2);
+        $installationTotal = round(array_sum(array_column($installationLines, 'amount')), 2);
+
+        return [
+            'quantities' => [
+                'panels_delivery' => (int) $analysis['panel_delivery_qty'],
+                'panels_installation' => (int) $analysis['panel_install_qty'],
+                'inverters' => (int) $analysis['inverter_qty'],
+                'batteries' => (int) $analysis['battery_qty'],
+                'streetlights' => (int) $analysis['streetlight_qty'],
+            ],
+            'delivery_lines' => $deliveryLines,
+            'installation_lines' => $installationLines,
+            'delivery_total' => $deliveryTotal,
+            'installation_total' => $installationTotal,
         ];
     }
 
@@ -232,10 +364,10 @@ class CheckoutPricing
         $tierMap = $settings->normalizedShopQuantityFeeTiers();
         $delivery = 0.0;
 
-        if ($analysis['panel_qty'] > 0) {
+        if ($analysis['panel_delivery_qty'] > 0) {
             $delivery += ShopQuantityFeeTiers::feeForQuantity(
                 $tierMap[ShopQuantityFeeTiers::KEY_PANEL_DELIVERY] ?? [],
-                $analysis['panel_qty']
+                $analysis['panel_delivery_qty']
             );
         }
 
@@ -253,8 +385,12 @@ class CheckoutPricing
             );
         }
 
-        foreach ($analysis['other_category_ids'] as $categoryId) {
-            $delivery += self::shopCategoryDeliveryFee($settings, $categoryId);
+        foreach ($analysis['category_quantities'] as $categoryId => $categoryQty) {
+            $key = ShopQuantityFeeTiers::categoryDeliveryKey((int) $categoryId);
+            $delivery += ShopQuantityFeeTiers::feeForQuantity(
+                $tierMap[$key] ?? [],
+                (int) $categoryQty
+            );
         }
 
         return round($delivery, 2);
@@ -282,10 +418,17 @@ class CheckoutPricing
             $batteryInstallQty = 3;
         }
 
-        if ($analysis['panel_qty'] > 0) {
+        if ($analysis['panel_install_qty'] > 0) {
             $total += ShopQuantityFeeTiers::feeForQuantity(
                 $tierMap[ShopQuantityFeeTiers::KEY_PANEL_INSTALLATION] ?? [],
-                $analysis['panel_qty']
+                $analysis['panel_install_qty']
+            );
+        }
+
+        if ($analysis['streetlight_qty'] > 0) {
+            $total += ShopQuantityFeeTiers::feeForQuantity(
+                $tierMap[ShopQuantityFeeTiers::KEY_STREETLIGHT_INSTALLATION] ?? [],
+                $analysis['streetlight_qty']
             );
         }
 
@@ -303,14 +446,24 @@ class CheckoutPricing
             );
         }
 
+        foreach ($analysis['category_quantities'] as $categoryId => $categoryQty) {
+            $key = ShopQuantityFeeTiers::categoryInstallationKey((int) $categoryId);
+            $total += ShopQuantityFeeTiers::feeForQuantity(
+                $tierMap[$key] ?? [],
+                (int) $categoryQty
+            );
+        }
+
         return round($total, 2);
     }
 
     /**
      * @return array{
-     *   panel_qty: int,
+     *   panel_delivery_qty: int,
+     *   panel_install_qty: int,
      *   battery_qty: int,
      *   inverter_qty: int,
+     *   streetlight_qty: int,
      *   has_battery: bool,
      *   has_inverter: bool,
      *   has_streetlight: bool,
@@ -320,15 +473,18 @@ class CheckoutPricing
      *   inverter_category_id: ?int,
      *   streetlight_category_id: ?int,
      *   all_in_one_category_id: ?int,
-     *   other_category_ids: array<int, int>
+     *   category_quantities: array<int, int>,
+     *   category_labels: array<int, string>
      * }
      */
     public static function analyzeShopCartContents(Collection $cartItems): array
     {
         $result = [
-            'panel_qty' => 0,
+            'panel_delivery_qty' => 0,
+            'panel_install_qty' => 0,
             'battery_qty' => 0,
             'inverter_qty' => 0,
+            'streetlight_qty' => 0,
             'has_battery' => false,
             'has_inverter' => false,
             'has_streetlight' => false,
@@ -338,7 +494,8 @@ class CheckoutPricing
             'inverter_category_id' => null,
             'streetlight_category_id' => null,
             'all_in_one_category_id' => null,
-            'other_category_ids' => [],
+            'category_quantities' => [],
+            'category_labels' => [],
         ];
 
         foreach ($cartItems as $item) {
@@ -352,7 +509,8 @@ class CheckoutPricing
                 $productTitle = strtolower(trim((string) ($model->title ?? '')));
 
                 if (self::isShopSolarPanelItem($categoryTitle, $productTitle)) {
-                    $result['panel_qty'] += $qty;
+                    $result['panel_delivery_qty'] += $qty;
+                    $result['panel_install_qty'] += $qty;
                     $result['panel_category_id'] ??= $categoryId > 0 ? $categoryId : null;
                     continue;
                 }
@@ -367,17 +525,14 @@ class CheckoutPricing
                 if (self::isShopStreetlightItem($categoryTitle, $productTitle)) {
                     $result['has_streetlight'] = true;
                     $result['streetlight_category_id'] ??= $categoryId > 0 ? $categoryId : null;
-                    $result['panel_qty'] += self::streetlightPanelQuantity($productTitle, $qty);
+                    $result['streetlight_qty'] += $qty;
+                    $result['panel_delivery_qty'] += self::streetlightPanelQuantity($productTitle, $qty);
                     continue;
                 }
 
                 if (self::isShopAllInOneItem($categoryTitle, $productTitle)) {
                     $result['has_all_in_one'] = true;
                     $result['all_in_one_category_id'] ??= $categoryId > 0 ? $categoryId : null;
-                    if ($categoryId > 0) {
-                        $result['other_category_ids'][$categoryId] = $categoryId;
-                    }
-                    continue;
                 }
 
                 if (self::isShopInverterItem($categoryTitle, $productTitle)) {
@@ -387,8 +542,9 @@ class CheckoutPricing
                     continue;
                 }
 
-                if ($categoryId > 0) {
-                    $result['other_category_ids'][$categoryId] = $categoryId;
+                if ($categoryId > 0 && ! ShopQuantityFeeTiers::isManagedCoreCategoryTitle($categoryTitle)) {
+                    $result['category_quantities'][$categoryId] = ($result['category_quantities'][$categoryId] ?? 0) + $qty;
+                    $result['category_labels'][$categoryId] = (string) ($model->category?->title ?? ('Category #'.$categoryId));
                 }
 
                 continue;
@@ -405,7 +561,9 @@ class CheckoutPricing
             $hasBattery = str_contains($bundleType, 'battery') || str_contains($bundleType, 'batteries');
 
             if ($hasSolar) {
-                $result['panel_qty'] += self::bundleMaterialQuantity($model, $qty, 'panel');
+                $panelCount = self::bundleMaterialQuantity($model, $qty, 'panel');
+                $result['panel_delivery_qty'] += $panelCount;
+                $result['panel_install_qty'] += $panelCount;
             }
 
             if ($hasBattery) {
@@ -415,16 +573,8 @@ class CheckoutPricing
 
             if (self::isShopStreetlightItem('', $bundleTitle)) {
                 $result['has_streetlight'] = true;
-                $result['panel_qty'] += self::streetlightPanelQuantity($bundleTitle, $qty);
-            }
-
-            if (self::isShopAllInOneItem('', $bundleTitle) && ! $hasSolar) {
-                $result['has_all_in_one'] = true;
-                $aioCategoryId = self::findShopCategoryIdByTitlePatterns(['all in one', 'all-in-one', 'aio']);
-                if ($aioCategoryId) {
-                    $result['all_in_one_category_id'] ??= $aioCategoryId;
-                    $result['other_category_ids'][$aioCategoryId] = $aioCategoryId;
-                }
+                $result['streetlight_qty'] += $qty;
+                $result['panel_delivery_qty'] += self::streetlightPanelQuantity($bundleTitle, $qty);
             }
 
             if ($hasInverter) {

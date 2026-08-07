@@ -36,6 +36,9 @@ class CheckoutSettingsController extends Controller
             'shop_quantity_fee_tiers' => $channel === CheckoutSetting::CHANNEL_SHOP
                 ? $s->normalizedShopQuantityFeeTiers()
                 : ShopQuantityFeeTiers::defaultTierMap(),
+            'shop_tier_sections' => $channel === CheckoutSetting::CHANNEL_SHOP
+                ? ShopQuantityFeeTiers::tierSectionDefinitions()
+                : [],
             'product_categories' => $categoryDefs,
             'delivery_min_working_days' => (int) $s->delivery_min_working_days,
             'delivery_max_working_days' => (int) $s->delivery_max_working_days,

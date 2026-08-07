@@ -358,6 +358,7 @@ class CartController extends Controller
                         'include_installation' => $includeInstallation,
                         'include_insurance' => $includeInsurance,
                         'fee_category_keys' => $categoryFees['category_keys'],
+                        'fee_breakdown' => $categoryFees['breakdown'] ?? null,
                     ],
                     'grand_total' => $grandTotal,
                 ],

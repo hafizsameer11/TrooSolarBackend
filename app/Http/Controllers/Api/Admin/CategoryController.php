@@ -44,6 +44,10 @@ class CategoryController extends Controller
             }
 
             $category = Category::create($data);
+            \App\Support\ShopQuantityFeeTiers::bootstrapCategoryTiers(
+                (int) $category->id,
+                (string) ($category->title ?? '')
+            );
             return ResponseHelper::success($category, 'Category created.', 201);
         } catch (Exception $e) {
             return ResponseHelper::error('Failed to create category.', 500, $e->getMessage());
