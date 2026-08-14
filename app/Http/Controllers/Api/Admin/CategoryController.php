@@ -36,6 +36,10 @@ class CategoryController extends Controller
     {
         try {
             $data = $request->validated();
+            unset($data['status']);
+            if (! array_key_exists('show_on_store', $data)) {
+                $data['show_on_store'] = true;
+            }
 
             if ($request->hasFile('icon')) {
                 $file = $request->file('icon');
@@ -73,6 +77,7 @@ class CategoryController extends Controller
             if (!$category) return ResponseHelper::error('Category not found.', 404);
 
             $data = $request->validated();
+            unset($data['status']);
 
             if ($request->hasFile('icon')) {
                 if ($category->icon) {
@@ -151,6 +156,11 @@ public function getProducts($id)
 
         if (!$category) {
             return ResponseHelper::error('Category not found.', 404);
+        }
+
+        $isAdmin = strtolower((string) (auth()->user()->role ?? '')) === 'admin';
+        if (! $isAdmin && Schema::hasColumn('categories', 'show_on_store') && $category->show_on_store === false) {
+            return ResponseHelper::success([], 'Category is hidden from Solar Store.');
         }
 
         $query = $category->products()

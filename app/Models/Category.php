@@ -14,7 +14,19 @@ class Category extends Model
         'icon',
         'has_method_selection',
         'sort_order',
+        'show_on_store',
     ];
+
+    protected $casts = [
+        'has_method_selection' => 'boolean',
+        'show_on_store' => 'boolean',
+        'sort_order' => 'integer',
+    ];
+
+    public function isShownOnStore(): bool
+    {
+        return $this->show_on_store !== false;
+    }
 
     // Optional: Define relationship with brands
     public function brands()
