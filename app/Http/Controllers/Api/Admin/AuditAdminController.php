@@ -458,11 +458,16 @@ class AuditAdminController extends Controller
                         : ($audit->audit_subtype === 'home' ? 'Home' : 'Home / Office'));
                 $created = optional($audit->created_at)?->format('d/m/Y H:i') ?: '—';
                 $customerType = $audit->resolvedCustomerType();
+                $heading = "#{$audit->id} · {$typeLabel} · " . ucfirst((string) ($audit->status ?? 'pending')) . " · {$created}";
+                if ($customerType && $audit->audit_type !== 'commercial') {
+                    $heading .= ' · ' . ucfirst($customerType);
+                }
+                if (!empty($audit->property_state)) {
+                    $heading .= ' · ' . $audit->property_state;
+                }
 
                 return array_merge($audit->toBuyNowContext(), [
-                    'heading' => "#{$audit->id} · {$typeLabel} · " . ucfirst((string) ($audit->status ?? 'pending')) . " · {$created}"
-                        . ($customerType ? ' · ' . ucfirst($customerType) : '')
-                        . (!empty($audit->property_state) ? ' · ' . $audit->property_state : ''),
+                    'heading' => $heading,
                     'type_label' => $typeLabel,
                     'has_property_details' => !empty($audit->property_address),
                     'needs_admin_input' => $audit->audit_type === 'commercial' && empty($audit->property_address),

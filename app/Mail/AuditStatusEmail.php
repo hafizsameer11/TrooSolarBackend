@@ -36,16 +36,16 @@ class AuditStatusEmail extends Mailable
         $this->status = $status;
         $this->auditTypeLabel = self::auditTypeDisplayLabel($auditRequest);
         $this->auditTypeTitle = self::auditTypeTitleCase($auditRequest);
-        $this->solutionLabel = self::productCategoryLabel($auditRequest->product_category ?? null);
+        $this->solutionLabel = self::solutionLabelForRequest($auditRequest);
 
         if ($status === 'approved') {
             $this->subjectLine = 'Your audit request has been approved - Troosolar';
             $this->headingText = MailBrand::heading('Your audit request has been approved');
-            $this->bodyText = 'Your '.$this->auditTypeLabel.' audit request has been approved. Professional audits are paid services — please complete payment using the instructions below, then reply to this email with your payment receipt for confirmation.';
+            $this->bodyText = 'Your audit request has been approved. Professional audits are paid services — please complete payment using the instructions below, then reply to this email with your payment receipt for confirmation.';
         } elseif ($status === 'rejected') {
             $this->subjectLine = 'Update on your audit request - Troosolar';
             $this->headingText = MailBrand::heading('Your audit request was not approved');
-            $this->bodyText = 'We are unable to approve your '.$this->auditTypeLabel.' audit request at this time. If you have questions, please reply to this email or contact support.';
+            $this->bodyText = 'We are unable to approve your audit request at this time. If you have questions, please reply to this email or contact support.';
         } else {
             $this->subjectLine = 'Update on your audit request - Troosolar';
             $this->headingText = MailBrand::heading('Update on your audit request');
@@ -104,6 +104,19 @@ class AuditStatusEmail extends Mailable
             'audit' => 'Professional energy audit',
             default => str_replace('-', ' ', (string) $value),
         };
+    }
+
+    /**
+     * BNPL commercial audits skip the solution picker; do not show inherited Buy Now full-kit.
+     */
+    public static function solutionLabelForRequest(AuditRequest $r): ?string
+    {
+        $source = strtolower((string) ($r->source ?? ''));
+        if ($source === 'bnpl' && ($r->audit_type ?? '') === 'commercial') {
+            return null;
+        }
+
+        return self::productCategoryLabel($r->product_category ?? null);
     }
 
     public function envelope(): Envelope
