@@ -17,13 +17,29 @@ class BundlePricing
     }
 
     /**
-     * BNPL catalog unit price. Uses admin bnpl_price when set; otherwise Buy Now price.
+     * BNPL catalog unit price.
+     * bnpl_price = BNPL list price; bnpl_discount_price = BNPL sale price when set.
+     * Falls back to Buy Now pricing when BNPL list is not set.
      */
     public static function bnplUnitPrice(Bundles $bundle): float
     {
-        $bnpl = (float) ($bundle->bnpl_price ?? 0);
+        $bnplList = (float) ($bundle->bnpl_price ?? 0);
+        if ($bnplList > 0) {
+            $bnplSale = (float) ($bundle->bnpl_discount_price ?? 0);
 
-        return $bnpl > 0 ? $bnpl : self::buyNowUnitPrice($bundle);
+            return $bnplSale > 0 && $bnplSale < $bnplList
+                ? $bnplSale
+                : $bnplList;
+        }
+
+        return self::buyNowUnitPrice($bundle);
+    }
+
+    public static function bnplListPrice(Bundles $bundle): float
+    {
+        $bnplList = (float) ($bundle->bnpl_price ?? 0);
+
+        return $bnplList > 0 ? $bnplList : (float) ($bundle->total_price ?? 0);
     }
 
     public static function buyNowUnitPriceFromArray(array $row): float
@@ -37,8 +53,22 @@ class BundlePricing
 
     public static function bnplUnitPriceFromArray(array $row): float
     {
-        $bnpl = (float) ($row['bnpl_price'] ?? 0);
+        $bnplList = (float) ($row['bnpl_price'] ?? 0);
+        if ($bnplList > 0) {
+            $bnplSale = (float) ($row['bnpl_discount_price'] ?? 0);
 
-        return $bnpl > 0 ? $bnpl : self::buyNowUnitPriceFromArray($row);
+            return $bnplSale > 0 && $bnplSale < $bnplList
+                ? $bnplSale
+                : $bnplList;
+        }
+
+        return self::buyNowUnitPriceFromArray($row);
+    }
+
+    public static function bnplListPriceFromArray(array $row): float
+    {
+        $bnplList = (float) ($row['bnpl_price'] ?? 0);
+
+        return $bnplList > 0 ? $bnplList : (float) ($row['total_price'] ?? 0);
     }
 }

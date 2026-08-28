@@ -59,6 +59,7 @@ class BundleSelectionController extends Controller
                         'total_price' => (float) $bundle->total_price,
                         'discount_price' => $bundle->discount_price ? (float) $bundle->discount_price : null,
                         'bnpl_price' => $bundle->bnpl_price ? (float) $bundle->bnpl_price : null,
+                        'bnpl_discount_price' => $bundle->bnpl_discount_price ? (float) $bundle->bnpl_discount_price : null,
                         'inver_rating' => $bundle->inver_rating,
                         'total_output' => $bundle->total_output,
                         'total_load' => $bundle->total_load,
@@ -189,8 +190,12 @@ class BundleSelectionController extends Controller
                 'bnpl_price' => Schema::hasColumn('bundles', 'bnpl_price') && $bundle->bnpl_price
                     ? (float) $bundle->bnpl_price
                     : null,
+                'bnpl_discount_price' => Schema::hasColumn('bundles', 'bnpl_discount_price') && $bundle->bnpl_discount_price
+                    ? (float) $bundle->bnpl_discount_price
+                    : null,
                 'buy_now_price' => \App\Support\BundlePricing::buyNowUnitPrice($bundle),
                 'effective_bnpl_price' => \App\Support\BundlePricing::bnplUnitPrice($bundle),
+                'bnpl_list_price' => \App\Support\BundlePricing::bnplListPrice($bundle),
                 'inver_rating' => $bundle->inver_rating,
                 'total_output' => $bundle->total_output,
                 'total_load' => $bundle->total_load,

@@ -533,6 +533,7 @@ class AdminCartController extends Controller
                         'price' => $bundle->total_price,
                         'discount_price' => $bundle->discount_price,
                         'bnpl_price' => $bundle->bnpl_price,
+                        'bnpl_discount_price' => $bundle->bnpl_discount_price,
                         'bundle_type' => $bundle->bundle_type,
                         'featured_image' => $bundle->featured_image_url ?? null,
                     ];

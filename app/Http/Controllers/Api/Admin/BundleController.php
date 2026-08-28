@@ -235,6 +235,11 @@ public function index(Request $request)
                     ? (float) $data['bnpl_price']
                     : null;
             }
+            if (Schema::hasColumn('bundles', 'bnpl_discount_price')) {
+                $createData['bnpl_discount_price'] = isset($data['bnpl_discount_price']) && $data['bnpl_discount_price'] !== ''
+                    ? (float) $data['bnpl_discount_price']
+                    : null;
+            }
             if (Schema::hasColumn('bundles', 'brand_id')) {
                 $createData['brand_id'] = isset($data['brand_id']) && $data['brand_id'] !== '' ? (int) $data['brand_id'] : null;
             }
@@ -531,6 +536,11 @@ public function index(Request $request)
                     ? ($data['bnpl_price'] === '' || $data['bnpl_price'] === null ? null : (float) $data['bnpl_price'])
                     : $bundle->bnpl_price;
             }
+            if (Schema::hasColumn('bundles', 'bnpl_discount_price')) {
+                $updatePayload['bnpl_discount_price'] = array_key_exists('bnpl_discount_price', $data)
+                    ? ($data['bnpl_discount_price'] === '' || $data['bnpl_discount_price'] === null ? null : (float) $data['bnpl_discount_price'])
+                    : $bundle->bnpl_discount_price;
+            }
             if (Schema::hasColumn('bundles', 'brand_id')) {
                 $updatePayload['brand_id'] = array_key_exists('brand_id', $data)
                     ? ($data['brand_id'] === '' || $data['brand_id'] === null ? null : (int) $data['brand_id'])
@@ -696,8 +706,12 @@ public function index(Request $request)
             'bnpl_price' => Schema::hasColumn('bundles', 'bnpl_price') && $bundle->bnpl_price
                 ? (float) $bundle->bnpl_price
                 : null,
+            'bnpl_discount_price' => Schema::hasColumn('bundles', 'bnpl_discount_price') && $bundle->bnpl_discount_price
+                ? (float) $bundle->bnpl_discount_price
+                : null,
             'buy_now_price' => BundlePricing::buyNowUnitPrice($bundle),
             'effective_bnpl_price' => BundlePricing::bnplUnitPrice($bundle),
+            'bnpl_list_price' => BundlePricing::bnplListPrice($bundle),
             'discount_end_date' => $bundle->discount_end_date,
             'inver_rating' => $bundle->inver_rating,
             'total_output' => $bundle->total_output,
