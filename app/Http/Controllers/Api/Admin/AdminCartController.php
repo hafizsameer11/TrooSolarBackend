@@ -6,6 +6,7 @@ use App\Helpers\ResponseHelper;
 use App\Http\Controllers\Controller;
 use App\Mail\CartLinkEmail;
 use App\Models\AuditRequest;
+use App\Models\Bundles;
 use App\Models\CartItem;
 use App\Models\CustomOrderLink;
 use App\Support\FrontendUrl;
