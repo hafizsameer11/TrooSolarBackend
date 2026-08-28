@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Helpers\ResponseHelper;
 use App\Models\CheckoutSetting;
 use App\Models\State;
+use App\Support\BnplTermsGate;
 use App\Support\CheckoutPricing;
 use Illuminate\Http\Request;
 
@@ -143,6 +144,8 @@ class ConfigurationController extends Controller
                     $payload['loan_durations'] = $loanDurations;
                 }
             }
+
+            $payload['terms_gate'] = BnplTermsGate::fromSettings($bnplSettings);
 
             return ResponseHelper::success($payload, 'Loan configuration retrieved successfully');
         } catch (\Exception $e) {

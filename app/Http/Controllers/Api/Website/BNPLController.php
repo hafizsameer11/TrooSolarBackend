@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Api\Website;
 
 use App\Helpers\ResponseHelper;
 use App\Http\Controllers\Controller;
-use App\Models\Bundles;
+use App\Support\BundlePricing;
 use App\Models\Guarantor;
 use App\Models\LoanApplication;
 use App\Models\LoanCalculation;
@@ -218,7 +218,7 @@ class BNPLController extends Controller
             foreach ($bundleIds as $bundleId) {
                 $bundle = Bundles::find($bundleId);
                 if ($bundle) {
-                    $unitPrice = (float) ($bundle->discount_price ?? $bundle->total_price ?? 0);
+                    $unitPrice = BundlePricing::bnplUnitPrice($bundle);
                     $orderItemsSnapshot[] = [
                         'itemable_type' => Bundles::class,
                         'itemable_id' => (int) $bundleId,
@@ -231,7 +231,10 @@ class BNPLController extends Controller
             foreach ($productIds as $productId) {
                 $product = Product::find($productId);
                 if ($product) {
-                    $unitPrice = (float) ($product->discount_price ?? $product->price ?? 0);
+                    $productDiscount = (float) ($product->discount_price ?? 0);
+                    $unitPrice = $productDiscount > 0
+                        ? $productDiscount
+                        : (float) ($product->price ?? 0);
                     $orderItemsSnapshot[] = [
                         'itemable_type' => Product::class,
                         'itemable_id' => (int) $productId,

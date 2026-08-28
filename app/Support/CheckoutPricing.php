@@ -885,6 +885,20 @@ class CheckoutPricing
                 $visibility = 'troosolar';
             } elseif (str_starts_with($rawTitle, '[FEE:OWN]')) {
                 $visibility = 'own';
+            } else {
+                $cleanForVis = $rawTitle;
+                foreach (['[FEE:TROOSOLAR]', '[FEE:OWN]', '[FEE]'] as $prefix) {
+                    if (str_starts_with($cleanForVis, $prefix)) {
+                        $cleanForVis = trim(substr($cleanForVis, strlen($prefix)));
+                        break;
+                    }
+                }
+                $lower = strtolower($cleanForVis);
+                if (str_contains($lower, 'material')) {
+                    $visibility = 'own';
+                } elseif (str_contains($lower, 'installation fee') || str_contains($lower, 'inspection fee')) {
+                    $visibility = 'troosolar';
+                }
             }
 
             $visible = match ($visibility) {

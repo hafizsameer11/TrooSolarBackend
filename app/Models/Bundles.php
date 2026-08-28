@@ -15,6 +15,7 @@ class Bundles extends Model
         'title',
         'total_price',
         'discount_price',
+        'bnpl_price',
         'discount_end_date',
         'featured_image',
         'bundle_type',

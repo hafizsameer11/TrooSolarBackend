@@ -25,6 +25,7 @@ class BundleRequest extends FormRequest
             'is_most_popular' => 'nullable|boolean',
             'total_price' => 'nullable|numeric|min:0',
             'discount_price' => 'nullable|numeric|min:0',
+            'bnpl_price' => 'nullable|numeric|min:0',
             'discount_end_date' => 'nullable|date',
 
             'items' => 'nullable|array',

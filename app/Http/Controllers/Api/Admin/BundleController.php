@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\BundleRequest;
+use App\Support\BundlePricing;
 use App\Models\Bundles;
 use App\Models\BundleItems;
 use App\Models\BundleMaterial;
@@ -229,6 +230,11 @@ public function index(Request $request)
                 'discount_price' => $discountPrice,
                 'discount_end_date' => isset($data['discount_end_date']) && $data['discount_end_date'] !== '' ? $data['discount_end_date'] : null,
             ];
+            if (Schema::hasColumn('bundles', 'bnpl_price')) {
+                $createData['bnpl_price'] = isset($data['bnpl_price']) && $data['bnpl_price'] !== ''
+                    ? (float) $data['bnpl_price']
+                    : null;
+            }
             if (Schema::hasColumn('bundles', 'brand_id')) {
                 $createData['brand_id'] = isset($data['brand_id']) && $data['brand_id'] !== '' ? (int) $data['brand_id'] : null;
             }
@@ -520,6 +526,11 @@ public function index(Request $request)
                 'discount_price' => $discountPrice,
                 'discount_end_date' => $data['discount_end_date'] ?? $bundle->discount_end_date,
             ];
+            if (Schema::hasColumn('bundles', 'bnpl_price')) {
+                $updatePayload['bnpl_price'] = array_key_exists('bnpl_price', $data)
+                    ? ($data['bnpl_price'] === '' || $data['bnpl_price'] === null ? null : (float) $data['bnpl_price'])
+                    : $bundle->bnpl_price;
+            }
             if (Schema::hasColumn('bundles', 'brand_id')) {
                 $updatePayload['brand_id'] = array_key_exists('brand_id', $data)
                     ? ($data['brand_id'] === '' || $data['brand_id'] === null ? null : (int) $data['brand_id'])
@@ -682,6 +693,11 @@ public function index(Request $request)
             'is_most_popular' => (bool) ($bundle->is_most_popular ?? false),
             'total_price' => (float) ($bundle->total_price ?? 0),
             'discount_price' => $bundle->discount_price ? (float) $bundle->discount_price : null,
+            'bnpl_price' => Schema::hasColumn('bundles', 'bnpl_price') && $bundle->bnpl_price
+                ? (float) $bundle->bnpl_price
+                : null,
+            'buy_now_price' => BundlePricing::buyNowUnitPrice($bundle),
+            'effective_bnpl_price' => BundlePricing::bnplUnitPrice($bundle),
             'discount_end_date' => $bundle->discount_end_date,
             'inver_rating' => $bundle->inver_rating,
             'total_output' => $bundle->total_output,

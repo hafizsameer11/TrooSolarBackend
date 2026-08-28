@@ -10,7 +10,7 @@ use App\Models\CartItem;
 use App\Models\CustomOrderLink;
 use App\Support\FrontendUrl;
 use App\Models\Product;
-use App\Models\Bundles;
+use App\Support\BundlePricing;
 use App\Models\User;
 use Exception;
 use Illuminate\Http\Request;
@@ -25,7 +25,7 @@ class AdminCartController extends Controller
 {
     /**
      * Customer dashboard URL for admin-pushed cart / custom order.
-     * Universal entry: /cart?token=…&type=buy_now|bnpl (Cart.jsx routes BNPL → /bnpl, Buy Now → checkout).
+     * Universal entry: /buy-now?token=… or /bnpl?token=… (legacy /cart?token=… still supported).
      */
     private function buildDashboardCustomOrderUrl(string $accessToken, string $orderType): string
     {
@@ -93,7 +93,11 @@ class AdminCartController extends Controller
                         $errors[] = "Product ID {$itemId} not found";
                         continue;
                     }
-                    $price = (float) ($product->discount_price ?? $product->price ?? 0);
+                    // discount_price of 0 means "no discount" — do not treat it as the selling price
+                    $productDiscount = (float) ($product->discount_price ?? 0);
+                    $price = $productDiscount > 0
+                        ? $productDiscount
+                        : (float) ($product->price ?? 0);
                     $snapshotItems[] = [
                         'type' => 'product',
                         'id' => $itemId,
@@ -107,7 +111,9 @@ class AdminCartController extends Controller
                         $errors[] = "Bundle ID {$itemId} not found";
                         continue;
                     }
-                    $price = (float) ($bundle->discount_price ?? $bundle->total_price ?? 0);
+                    $price = $orderType === 'bnpl'
+                        ? BundlePricing::bnplUnitPrice($bundle)
+                        : BundlePricing::buyNowUnitPrice($bundle);
                     $snapshotItems[] = [
                         'type' => 'bundle',
                         'id' => $itemId,
@@ -525,6 +531,7 @@ class AdminCartController extends Controller
                         'title' => $bundle->title,
                         'price' => $bundle->total_price,
                         'discount_price' => $bundle->discount_price,
+                        'bnpl_price' => $bundle->bnpl_price,
                         'bundle_type' => $bundle->bundle_type,
                         'featured_image' => $bundle->featured_image_url ?? null,
                     ];

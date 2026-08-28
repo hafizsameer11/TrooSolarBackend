@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Helpers\ResponseHelper;
 use App\Http\Controllers\Controller;
 use App\Models\BnplSettings;
+use App\Support\BnplTermsGate;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -36,6 +37,7 @@ class BnplSettingsController extends Controller
                 'minimum_loan_amount' => (float) $settings->minimum_loan_amount,
                 'credit_check_fee' => (float) ($settings->credit_check_fee ?? 1000),
                 'loan_durations' => $settings->loan_durations ?? [3, 6, 9, 12],
+                'terms_gate' => BnplTermsGate::fromSettings($settings),
             ], 'BNPL settings retrieved successfully');
         } catch (Exception $e) {
             Log::error('BNPL Settings Show Error: ' . $e->getMessage());
@@ -62,6 +64,14 @@ class BnplSettingsController extends Controller
                 'credit_check_fee' => 'nullable|numeric|min:0',
                 'loan_durations' => 'nullable|array',
                 'loan_durations.*' => 'integer|min:1|max:120',
+                'terms_gate_title' => 'nullable|string|max:255',
+                'terms_gate_subtitle' => 'nullable|string|max:2000',
+                'terms_gate_checkbox_prefix' => 'nullable|string|max:255',
+                'terms_gate_terms_label' => 'nullable|string|max:255',
+                'terms_gate_privacy_label' => 'nullable|string|max:255',
+                'terms_gate_proceed_label' => 'nullable|string|max:100',
+                'terms_of_service_url' => 'nullable|string|max:500',
+                'terms_privacy_policy_url' => 'nullable|string|max:500',
             ]);
 
             $settings = BnplSettings::get();
@@ -107,6 +117,21 @@ class BnplSettingsController extends Controller
                 $settings->loan_durations = array_values(array_unique($durations));
             }
 
+            foreach ([
+                'terms_gate_title',
+                'terms_gate_subtitle',
+                'terms_gate_checkbox_prefix',
+                'terms_gate_terms_label',
+                'terms_gate_privacy_label',
+                'terms_gate_proceed_label',
+                'terms_of_service_url',
+                'terms_privacy_policy_url',
+            ] as $field) {
+                if ($request->has($field)) {
+                    $settings->{$field} = $request->input($field);
+                }
+            }
+
             $settings->save();
 
             $downPaymentOptions = is_array($settings->down_payment_options)
@@ -127,6 +152,7 @@ class BnplSettingsController extends Controller
                 'minimum_loan_amount' => (float) $settings->minimum_loan_amount,
                 'credit_check_fee' => (float) ($settings->credit_check_fee ?? 1000),
                 'loan_durations' => $settings->loan_durations ?? [3, 6, 9, 12],
+                'terms_gate' => BnplTermsGate::fromSettings($settings),
             ], 'BNPL settings updated successfully');
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([

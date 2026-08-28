@@ -38,6 +38,10 @@ class FrontendUrl
             return self::base()."/buy-now?token={$tokenEnc}&type={$typeEnc}&step=4";
         }
 
+        if ($orderType === 'bnpl') {
+            return self::base()."/bnpl?token={$tokenEnc}&type={$typeEnc}";
+        }
+
         return self::base()."/cart?token={$tokenEnc}&type={$typeEnc}";
     }
 }

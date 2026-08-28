@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\BundlePricing;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Collection;
@@ -63,6 +64,19 @@ class CustomOrderLink extends Model
             $unitPrice = (float) ($row['unit_price'] ?? 0);
             $subtotal = (float) ($row['subtotal'] ?? ($unitPrice * $qty));
             $itemable = $type === 'bundle' ? $bundles->get($id) : $products->get($id);
+
+            // Heal snapshots that stored 0 because discount_price was 0 (no real discount).
+            if ($unitPrice <= 0 && $itemable) {
+                $useBnpl = strtolower((string) ($this->order_type ?? '')) === 'bnpl';
+                if ($type === 'bundle') {
+                    $unitPrice = $useBnpl
+                        ? BundlePricing::bnplUnitPrice($itemable)
+                        : BundlePricing::buyNowUnitPrice($itemable);
+                } else {
+                    $unitPrice = BundlePricing::buyNowUnitPrice($itemable);
+                }
+                $subtotal = round($unitPrice * $qty, 2);
+            }
 
             return (object) [
                 'id' => $this->id * 1000 + $index + 1,

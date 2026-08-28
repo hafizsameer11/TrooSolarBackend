@@ -18,6 +18,14 @@ class BnplSettings extends Model
         'minimum_loan_amount',
         'credit_check_fee',
         'loan_durations',
+        'terms_gate_title',
+        'terms_gate_subtitle',
+        'terms_gate_checkbox_prefix',
+        'terms_gate_terms_label',
+        'terms_gate_privacy_label',
+        'terms_gate_proceed_label',
+        'terms_of_service_url',
+        'terms_privacy_policy_url',
     ];
 
     protected $casts = [
