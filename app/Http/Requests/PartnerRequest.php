@@ -26,7 +26,8 @@ class PartnerRequest extends FormRequest
         return [
             'name' =>'nullable',
             'email' =>'nullable|email',
-            'status' =>'nullable',
+            'status' =>'nullable|string',
+            'slug' => 'nullable|string|max:64',
             'no_of_loans' =>'nullable',
             'amount' =>'nullable',
         ];

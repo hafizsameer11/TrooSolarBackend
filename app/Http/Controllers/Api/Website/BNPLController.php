@@ -29,6 +29,8 @@ use App\Services\MonoService;
 use App\Services\MonoDirectDebitService;
 use App\Models\MonoCreditCheckSession;
 use App\Models\UserMonoAccount;
+use App\Models\Partner;
+use App\Support\BnplFinanceAgreement;
 use App\Support\FrontendUrl;
 
 class BNPLController extends Controller
@@ -49,6 +51,9 @@ class BNPLController extends Controller
             // Convert FormData bracket notation to nested arrays
             $personalDetails = [];
             $propertyDetails = [];
+            $nextOfKinIn = [];
+            $employmentIn = [];
+            $businessIn = [];
 
             foreach ($allInput as $key => $value) {
                 // Handle personal_details[field] notation
@@ -63,6 +68,18 @@ class BNPLController extends Controller
                     $propertyDetails[$fieldName] = $value;
                     unset($allInput[$key]);
                 }
+                elseif (preg_match('/^next_of_kin\[(.+)\]$/', $key, $matches)) {
+                    $nextOfKinIn[$matches[1]] = $value;
+                    unset($allInput[$key]);
+                }
+                elseif (preg_match('/^employment_details\[(.+)\]$/', $key, $matches)) {
+                    $employmentIn[$matches[1]] = $value;
+                    unset($allInput[$key]);
+                }
+                elseif (preg_match('/^business_details\[(.+)\]$/', $key, $matches)) {
+                    $businessIn[$matches[1]] = $value;
+                    unset($allInput[$key]);
+                }
             }
 
             // Merge converted nested arrays back
@@ -71,6 +88,32 @@ class BNPLController extends Controller
             }
             if (!empty($propertyDetails)) {
                 $allInput['property_details'] = array_merge($allInput['property_details'] ?? [], $propertyDetails);
+            }
+            if (!empty($nextOfKinIn)) {
+                $allInput['next_of_kin'] = array_merge($allInput['next_of_kin'] ?? [], $nextOfKinIn);
+            }
+            if (!empty($employmentIn)) {
+                $allInput['employment_details'] = array_merge($allInput['employment_details'] ?? [], $employmentIn);
+            }
+            if (!empty($businessIn)) {
+                $allInput['business_details'] = array_merge($allInput['business_details'] ?? [], $businessIn);
+            }
+
+            // Empty numeric property fields → null (FormData sends "")
+            if (isset($allInput['property_details']) && is_array($allInput['property_details'])) {
+                foreach (['floors', 'rooms'] as $numKey) {
+                    if (array_key_exists($numKey, $allInput['property_details'])
+                        && ($allInput['property_details'][$numKey] === '' || $allInput['property_details'][$numKey] === null)) {
+                        $allInput['property_details'][$numKey] = null;
+                    }
+                }
+                if (isset($allInput['property_details']['is_gated_estate'])) {
+                    $ige = $allInput['property_details']['is_gated_estate'];
+                    $allInput['property_details']['is_gated_estate'] = filter_var($ige, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+                    if ($allInput['property_details']['is_gated_estate'] === null) {
+                        $allInput['property_details']['is_gated_estate'] = in_array((string) $ige, ['1', 'true', 'on', 'yes'], true);
+                    }
+                }
             }
 
             // Trim BVN if it exists (handle both nested and flat formats)
@@ -101,6 +144,30 @@ class BNPLController extends Controller
             $creditCheckMethod = (string) ($allInput['credit_check_method'] ?? 'manual');
             $isAutoCreditCheck = $creditCheckMethod === 'auto';
 
+            // Resolve financing option from Settings → Financing Partner list (Active only).
+            // Troosolar is a seeded partner (slug=troosolar) and can be activated/deactivated like others.
+            $requestedPartnerId = (int) ($allInput['financing_partner_id'] ?? 0);
+            $selectedFinancingPartner = $requestedPartnerId > 0 ? Partner::find($requestedPartnerId) : null;
+            if ($selectedFinancingPartner && $selectedFinancingPartner->isTroosolar()) {
+                $isPartnerFinancingPath = false;
+                $allInput['financing_path'] = 'troosolar';
+                $request->merge(['financing_path' => 'troosolar']);
+            } else {
+                $isPartnerFinancingPath = strtolower((string) ($allInput['financing_path'] ?? '')) === 'partner'
+                    || ($selectedFinancingPartner && ! $selectedFinancingPartner->isTroosolar());
+                if ($isPartnerFinancingPath) {
+                    $allInput['financing_path'] = 'partner';
+                    $request->merge(['financing_path' => 'partner']);
+                }
+            }
+
+            if ($isPartnerFinancingPath) {
+                $creditCheckMethod = 'partner';
+                $isAutoCreditCheck = false;
+                $request->merge(['credit_check_method' => 'partner']);
+                $allInput['credit_check_method'] = 'partner';
+            }
+
             $settings = BnplSettings::get();
             $allowedDurations = $settings->loan_durations ?? [3, 6, 9, 12];
             // Validate required fields - handle both JSON and FormData formats
@@ -109,13 +176,19 @@ class BNPLController extends Controller
                 'product_category' => 'required|string',
                 'loan_amount' => 'required|numeric|min:0',
                 'repayment_duration' => 'required|integer|in:' . implode(',', $allowedDurations),
-                'credit_check_method' => 'required|in:auto,manual',
-                'bank_statement' => $isAutoCreditCheck
+                'credit_check_method' => $isPartnerFinancingPath
+                    ? 'required|in:partner'
+                    : 'required|in:auto,manual',
+                'financing_path' => 'required|in:partner,troosolar',
+                'financing_partner_id' => 'required|integer|exists:partners,id',
+                'finance_agreement_accepted' => 'accepted',
+                'property_status' => 'nullable|string|in:owned,rented',
+                'bank_statement' => ($isAutoCreditCheck || $isPartnerFinancingPath)
                     ? 'nullable|file|mimes:pdf,jpg,jpeg,png|max:10240'
                     : ($canReusePriorDocs
                         ? 'nullable|file|mimes:pdf,jpg,jpeg,png|max:10240'
                         : 'required|file|mimes:pdf,jpg,jpeg,png|max:10240'),
-                'live_photo' => $isAutoCreditCheck
+                'live_photo' => ($isAutoCreditCheck || $isPartnerFinancingPath)
                     ? 'nullable|file|mimes:jpg,jpeg,png|max:5120'
                     : ($canReusePriorDocs
                         ? 'nullable|file|mimes:jpg,jpeg,png|max:5120'
@@ -176,8 +249,8 @@ class BNPLController extends Controller
                 $validationRules['property_details.address'] = 'required|string';
                 $validationRules['property_details.is_gated_estate'] = 'required|boolean';
                 $validationRules['property_details.landmark'] = 'nullable|string|max:255';
-                $validationRules['property_details.floors'] = 'nullable|integer|min:1';
-                $validationRules['property_details.rooms'] = 'nullable|integer|min:1';
+                $validationRules['property_details.floors'] = 'nullable|integer|min:0';
+                $validationRules['property_details.rooms'] = 'nullable|integer|min:0';
                 // Must be validated so they are included in $data (otherwise Laravel strips them and DB never saves)
                 $validationRules['property_details.estate_name'] = 'nullable|string|max:255';
                 $validationRules['property_details.estate_address'] = 'nullable|string';
@@ -200,7 +273,63 @@ class BNPLController extends Controller
                 'product_ids' => 'nullable|array',
                 'product_ids.*' => 'integer|exists:products,id',
                 'loan_plan_snapshot' => 'nullable|string',
+                // Extended Final Application fields (optional at API; UI enforces by customer type)
+                'personal_details.bank_account_no' => 'nullable|string|max:64',
+                'personal_details.bank_name' => 'nullable|string|max:255',
+                'personal_details.gender' => 'nullable|string|max:64',
+                'personal_details.date_of_birth' => 'nullable|string|max:32',
+                'personal_details.marital_status' => 'nullable|string|max:64',
+                'personal_details.occupation' => 'nullable|string|max:255',
+                'personal_details.monthly_income' => 'nullable|string|max:64',
+                'personal_details.id_type' => 'nullable|string|max:64',
+                'personal_details.id_expiry_date' => 'nullable|string|max:32',
+                'personal_details.id_no' => 'nullable|string|max:128',
+                'next_of_kin' => 'nullable|array',
+                'next_of_kin.name' => 'nullable|string|max:255',
+                'next_of_kin.phone' => 'nullable|string|max:40',
+                'next_of_kin.address' => 'nullable|string',
+                'employment_details' => 'nullable|array',
+                'employment_details.company_name' => 'nullable|string|max:255',
+                'employment_details.company_address' => 'nullable|string',
+                'employment_details.employment_duration' => 'nullable|string|max:128',
+                'employment_details.staff_id_no' => 'nullable|string|max:128',
+                'business_details' => 'nullable|array',
+                'business_details.business_name' => 'nullable|string|max:255',
+                'business_details.business_address' => 'nullable|string',
+                'business_details.business_rc_bn' => 'nullable|string|max:128',
+                'business_details.business_bank_account_no' => 'nullable|string|max:64',
+                'business_details.business_bank_name' => 'nullable|string|max:255',
+                'business_details.annual_turnover' => 'nullable|string|max:64',
+                'business_details.avg_monthly_turnover' => 'nullable|string|max:64',
+                'business_details.date_of_incorporation' => 'nullable|string|max:32',
+                'business_details.business_ownership' => 'nullable|string',
+                'business_details.official_email' => 'nullable|email|max:255',
+                'business_details.nature_of_business' => 'nullable|string|max:255',
+                'property_details.property_status' => 'nullable|string|in:owned,rented',
             ]));
+
+            $financingPath = strtolower((string) ($data['financing_path'] ?? 'troosolar'));
+            $financingPartnerId = null;
+            if (empty($data['financing_partner_id'])) {
+                return ResponseHelper::error('Please select a financing option from the list.', 422);
+            }
+            $partner = Partner::find((int) $data['financing_partner_id']);
+            if (! $partner || ! $partner->isActive()) {
+                return ResponseHelper::error('Selected financing option is not available. Ask admin to activate it under Settings → Financing Partner.', 422);
+            }
+            $financingPartnerId = (int) $partner->id;
+            $financingPath = $partner->isTroosolar() ? 'troosolar' : 'partner';
+            $isPartnerFinancingPath = $financingPath === 'partner';
+            $data['financing_path'] = $financingPath;
+
+            if (strtolower((string) ($data['customer_type'] ?? '')) === 'sme') {
+                $propStatus = $data['property_status']
+                    ?? ($allInput['property_details']['property_status'] ?? null);
+                if (! in_array($propStatus, ['owned', 'rented'], true)) {
+                    return ResponseHelper::error('Property status (Owned or Rented) is required for SME applications.', 422);
+                }
+                $data['property_status'] = $propStatus;
+            }
 
             // Get loan amount (minimum validation removed - no minimum requirement)
             $loanAmount = (float) $data['loan_amount'];
@@ -341,7 +470,7 @@ class BNPLController extends Controller
                 $livePhotoPath = $priorApp->live_photo_path;
             }
 
-            if (! $isAutoCreditCheck && (empty($bankStatementPath) || empty($livePhotoPath))) {
+            if (! $isAutoCreditCheck && ! $isPartnerFinancingPath && (empty($bankStatementPath) || empty($livePhotoPath))) {
                 return ResponseHelper::error('Bank statement and live photo are required (upload new files or use a valid re-apply link).', 422);
             }
 
@@ -414,14 +543,77 @@ class BNPLController extends Controller
                 $loanCalculation->save();
             }
 
-            // Merge exact "Final Application" personal fields into loan_plan_snapshot for admin display (form can differ from profile)
+            // Merge exact "Final Application" fields into loan_plan_snapshot for admin display
             $planSnapshotForDb = is_array($planSnapshot) ? $planSnapshot : [];
+            $nextOfKin = $data['next_of_kin'] ?? ($allInput['next_of_kin'] ?? []);
+            $employmentDetails = $data['employment_details'] ?? ($allInput['employment_details'] ?? []);
+            $businessDetails = $data['business_details'] ?? ($allInput['business_details'] ?? []);
+            if (! is_array($nextOfKin)) {
+                $nextOfKin = [];
+            }
+            if (! is_array($employmentDetails)) {
+                $employmentDetails = [];
+            }
+            if (! is_array($businessDetails)) {
+                $businessDetails = [];
+            }
+
+            $propertyStatus = $data['property_status']
+                ?? ($propertyDetails['property_status'] ?? null);
+
             $planSnapshotForDb['final_application_personal'] = [
                 'full_name' => $personalDetails['full_name'] ?? null,
+                'bank_account_no' => $personalDetails['bank_account_no'] ?? null,
+                'bank_name' => $personalDetails['bank_name'] ?? null,
                 'bvn' => $personalDetails['bvn'] ?? null,
                 'phone' => $personalDetails['phone'] ?? null,
                 'email' => $personalDetails['email'] ?? null,
+                'gender' => $personalDetails['gender'] ?? null,
+                'date_of_birth' => $personalDetails['date_of_birth'] ?? null,
+                'marital_status' => $personalDetails['marital_status'] ?? null,
+                'occupation' => $personalDetails['occupation'] ?? null,
+                'monthly_income' => $personalDetails['monthly_income'] ?? null,
                 'social_media' => $personalDetails['social_media'] ?? null,
+                'id_type' => $personalDetails['id_type'] ?? null,
+                'id_expiry_date' => $personalDetails['id_expiry_date'] ?? null,
+                'id_no' => $personalDetails['id_no'] ?? null,
+            ];
+            $planSnapshotForDb['final_application_next_of_kin'] = [
+                'name' => $nextOfKin['name'] ?? null,
+                'phone' => $nextOfKin['phone'] ?? null,
+                'address' => $nextOfKin['address'] ?? null,
+            ];
+            $planSnapshotForDb['final_application_employment'] = [
+                'company_name' => $employmentDetails['company_name'] ?? null,
+                'company_address' => $employmentDetails['company_address'] ?? null,
+                'employment_duration' => $employmentDetails['employment_duration'] ?? null,
+                'staff_id_no' => $employmentDetails['staff_id_no'] ?? null,
+            ];
+            $planSnapshotForDb['final_application_business'] = [
+                'business_name' => $businessDetails['business_name'] ?? null,
+                'business_address' => $businessDetails['business_address'] ?? null,
+                'business_rc_bn' => $businessDetails['business_rc_bn'] ?? null,
+                'business_bank_account_no' => $businessDetails['business_bank_account_no'] ?? null,
+                'business_bank_name' => $businessDetails['business_bank_name'] ?? null,
+                'annual_turnover' => $businessDetails['annual_turnover'] ?? null,
+                'avg_monthly_turnover' => $businessDetails['avg_monthly_turnover'] ?? null,
+                'date_of_incorporation' => $businessDetails['date_of_incorporation'] ?? null,
+                'business_ownership' => $businessDetails['business_ownership'] ?? null,
+                'official_email' => $businessDetails['official_email'] ?? null,
+                'nature_of_business' => $businessDetails['nature_of_business'] ?? null,
+            ];
+            $planSnapshotForDb['finance_agreement'] = [
+                'accepted' => true,
+                'accepted_at' => now()->toIso8601String(),
+                'customer_type' => $data['customer_type'] ?? null,
+                'text' => BnplFinanceAgreement::forCustomerType($data['customer_type'] ?? null),
+            ];
+            $planSnapshotForDb['financing'] = [
+                'path' => $financingPath,
+                'partner_id' => $financingPartnerId,
+                'partner_name' => $financingPartnerId
+                    ? (Partner::find($financingPartnerId)?->name)
+                    : null,
             ];
 
             // Create loan application (with optional order_items_snapshot for multi-item BNPL orders)
@@ -432,6 +624,9 @@ class BNPLController extends Controller
                 'loan_amount' => $loanAmount,
                 'repayment_duration' => $data['repayment_duration'] ?? null,
                 'customer_type' => $data['customer_type'] ?? null,
+                'financing_path' => $financingPath,
+                'financing_partner_id' => $financingPartnerId,
+                'finance_agreement_accepted_at' => now(),
                 'product_category' => $data['product_category'] ?? null,
                 'audit_type' => $data['audit_type'] ?? null,
                 'property_state' => $propertyDetails['state'] ?? null,
@@ -439,10 +634,11 @@ class BNPLController extends Controller
                 'property_landmark' => $propertyDetails['landmark'] ?? null,
                 'property_floors' => $propertyDetails['floors'] ?? null,
                 'property_rooms' => $propertyDetails['rooms'] ?? null,
+                'property_status' => $propertyStatus,
                 'is_gated_estate' => $propertyDetails['is_gated_estate'] ?? false,
                 'estate_name' => $propertyDetails['estate_name'] ?? null,
                 'estate_address' => $propertyDetails['estate_address'] ?? null,
-                'credit_check_method' => $data['credit_check_method'] ?? 'auto',
+                'credit_check_method' => $data['credit_check_method'] ?? ($isPartnerFinancingPath ? 'partner' : 'auto'),
                 'bank_statement_path' => $bankStatementPath,
                 'live_photo_path' => $livePhotoPath,
                 'social_media_handle' => $personalDetails['social_media'] ?? null,

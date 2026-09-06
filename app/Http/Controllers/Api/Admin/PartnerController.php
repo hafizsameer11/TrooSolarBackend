@@ -26,12 +26,19 @@ class PartnerController extends Controller
         try
         {
             $data = $request->validated();
+            if (isset($data['status'])) {
+                $data['status'] = Partner::normalizeStatus($data['status']);
+            }
+            // External partners must not claim the Troosolar slug
+            if (isset($data['slug']) && strtolower((string) $data['slug']) === Partner::SLUG_TROOSOLAR) {
+                unset($data['slug']);
+            }
             // Check for duplicate email
             if (!empty($data['email']) && Partner::where('email', $data['email'])->exists()) {
                 return ResponseHelper::error('Email is already registered for a partner', 409);
             }
             $partner = Partner::create($data);
-            return ResponseHelper::success($data, 'Partner is added succesfully');
+            return ResponseHelper::success($partner, 'Partner is added succesfully');
         }
         catch(Exception $ex)
         {
@@ -44,12 +51,20 @@ class PartnerController extends Controller
     {
         try
         {
-            $all_partners = Partner::get();
-            // dd($all_partners);
+            Partner::ensureTroosolarPartner();
+
+            $all_partners = Partner::orderByRaw(
+                "CASE WHEN LOWER(COALESCE(slug, '')) = ? THEN 0 ELSE 1 END",
+                [Partner::SLUG_TROOSOLAR]
+            )->orderBy('name')->get();
+
            $data = $all_partners->map(function ($partner) {
             return [
                 'id'=> $partner->id,
                 'Partner name' => $partner->name,
+                'Email' => $partner->email,
+                'slug' => $partner->slug,
+                'is_troosolar' => $partner->isTroosolar(),
                 'No of Loans' => $partner->no_of_loans,
                 'Amount' => $partner->amount,
                 'Date Created' => $partner->created_at,
@@ -72,6 +87,16 @@ class PartnerController extends Controller
         {
             $partner = Partner::findOrFail($partner_id);
             $data = $request->validated();
+            if (isset($data['status'])) {
+                $data['status'] = Partner::normalizeStatus($data['status']);
+            }
+
+            // Keep Troosolar slug immutable; do not allow other partners to take it
+            if ($partner->isTroosolar()) {
+                unset($data['slug']);
+            } elseif (isset($data['slug']) && strtolower((string) $data['slug']) === Partner::SLUG_TROOSOLAR) {
+                unset($data['slug']);
+            }
 
             // Check for duplicate email (exclude current partner)
             if (!empty($data['email']) && Partner::where('email', $data['email'])->where('id', '!=', $partner_id)->exists()) {
@@ -79,7 +104,7 @@ class PartnerController extends Controller
             }
 
             $partner->update($data);
-            return ResponseHelper::success($partner, 'Partner is updated successfully');
+            return ResponseHelper::success($partner->fresh(), 'Partner is updated successfully');
         }
         catch (ModelNotFoundException $e) {
             return ResponseHelper::error('Partner not found', 404);
@@ -96,6 +121,9 @@ class PartnerController extends Controller
         try
         {
             $delete_partner = Partner::findOrFail($partner_id);
+            if ($delete_partner->isTroosolar()) {
+                return ResponseHelper::error('Troosolar cannot be deleted. Set status to Inactive to hide it from the customer list.', 422);
+            }
             $delete_partner->delete();
             return ResponseHelper::success('Partner is deleted successfully');
         }

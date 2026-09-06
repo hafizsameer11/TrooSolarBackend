@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Website;
 use App\Http\Controllers\Controller;
 use App\Helpers\ResponseHelper;
 use App\Models\CheckoutSetting;
+use App\Models\Partner;
 use App\Models\State;
 use App\Support\BnplTermsGate;
 use App\Support\CheckoutPricing;
@@ -24,6 +25,39 @@ class ConfigurationController extends Controller
         ];
 
         return ResponseHelper::success($customerTypes, 'Customer types retrieved successfully');
+    }
+
+    /**
+     * Active financing partners for BNPL Final Application selection.
+     * GET /api/config/financing-partners
+     */
+    public function getFinancingPartners()
+    {
+        try {
+            Partner::ensureTroosolarPartner();
+
+            $partners = Partner::query()
+                ->whereRaw('LOWER(COALESCE(status, "")) = ?', ['active'])
+                ->orderByRaw(
+                    "CASE WHEN LOWER(COALESCE(slug, '')) = ? THEN 0 ELSE 1 END",
+                    [Partner::SLUG_TROOSOLAR]
+                )
+                ->orderBy('name')
+                ->get(['id', 'name', 'slug', 'status'])
+                ->map(function (Partner $partner) {
+                    return [
+                        'id' => $partner->id,
+                        'name' => $partner->name,
+                        'slug' => $partner->slug,
+                        'status' => $partner->status,
+                        'is_troosolar' => $partner->isTroosolar(),
+                    ];
+                });
+
+            return ResponseHelper::success($partners, 'Financing partners retrieved successfully');
+        } catch (\Exception $e) {
+            return ResponseHelper::error('Failed to retrieve financing partners', 500);
+        }
     }
 
     /**

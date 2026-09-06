@@ -83,7 +83,8 @@ class BNPLAdminController extends Controller
                 'user',
                 'guarantor',
                 'mono',
-                'mono.loanCalculation'
+                'mono.loanCalculation',
+                'financingPartner',
             ])->find($id);
 
             if (!$application) {

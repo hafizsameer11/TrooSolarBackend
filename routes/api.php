@@ -107,6 +107,7 @@ Route::post('/reset-password', [UserController::class, 'resetPassword']);
 
 // Configuration endpoints (public)
 Route::get('/config/customer-types', [ConfigurationController::class, 'getCustomerTypes']);
+Route::get('/config/financing-partners', [ConfigurationController::class, 'getFinancingPartners']);
 Route::get('/config/audit-types', [ConfigurationController::class, 'getAuditTypes']);
 Route::get('/config/states', [ConfigurationController::class, 'getStates']);
 Route::get('/config/loan-configuration', [ConfigurationController::class, 'getLoanConfiguration']);

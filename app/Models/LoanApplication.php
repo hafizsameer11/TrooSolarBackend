@@ -22,6 +22,9 @@ class LoanApplication extends Model
     'loan_amount',
     'repayment_duration',
     'customer_type',
+    'financing_path',
+    'financing_partner_id',
+    'finance_agreement_accepted_at',
     'product_category',
     'audit_type',
     'property_state',
@@ -29,6 +32,7 @@ class LoanApplication extends Model
     'property_landmark',
     'property_floors',
     'property_rooms',
+    'property_status',
     'is_gated_estate',
     'estate_name',
     'estate_address',
@@ -61,6 +65,7 @@ class LoanApplication extends Model
         'installation_rejected_dates' => 'array',
         'mono_credit_report' => 'array',
         'mono_can_afford' => 'boolean',
+        'finance_agreement_accepted_at' => 'datetime',
     ];
 
 // loan history
@@ -98,6 +103,11 @@ public function loanStatus()
  public function guarantor()
  {
      return $this->hasOne(Guarantor::class, 'loan_application_id');
+ }
+
+ public function financingPartner()
+ {
+     return $this->belongsTo(Partner::class, 'financing_partner_id');
  }
 
 }
