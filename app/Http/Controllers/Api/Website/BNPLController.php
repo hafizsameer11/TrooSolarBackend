@@ -910,7 +910,8 @@ class BNPLController extends Controller
     /**
      * GET /api/bnpl/guarantor/form
      * Download the guarantor form PDF (for customers to give to their guarantor).
-     * Optional query: loan_application_id (to ensure user has an application).
+     * Optional query: loan_application_id — when provided, serves Residential or SME form
+     * matching that application's customer_type (commercial → SME form).
      */
     public function downloadGuarantorForm(Request $request)
     {
@@ -920,7 +921,7 @@ class BNPLController extends Controller
                 return response()->json(['message' => 'Unauthenticated'], 401);
             }
 
-            // Optional: ensure user has a BNPL application when loan_application_id is provided
+            $customerType = null;
             $applicationId = $request->query('loan_application_id');
             if ($applicationId) {
                 $application = LoanApplication::where('id', $applicationId)
@@ -929,13 +930,17 @@ class BNPLController extends Controller
                 if (!$application) {
                     return response()->json(['message' => 'Loan application not found'], 404);
                 }
+                $customerType = $application->customer_type;
+            } elseif ($request->query('flow')) {
+                $customerType = $request->query('flow');
             }
 
-            // Form path: public/documents/guarantor-form.pdf or config
-            $relativePath = config('bnpl.guarantor_form_path', 'documents/guarantor-form.pdf');
+            [$relativePath, $flowKey] = $this->resolveGuarantorFormPath($customerType);
             $fullPath = public_path($relativePath);
 
-            $filename = 'Troosolar-BNPL-Guarantor-Form.pdf';
+            $filename = $flowKey === 'sme'
+                ? 'Troosolar-BNPL-Guarantor-Form-SME.pdf'
+                : 'Troosolar-BNPL-Guarantor-Form-Residential.pdf';
 
             // Serve real file only if it exists, is readable, and has content (not empty)
             if (file_exists($fullPath) && is_readable($fullPath) && filesize($fullPath) > 0) {
@@ -946,12 +951,17 @@ class BNPLController extends Controller
                     'Content-Length' => (string) strlen($content),
                     'Content-Transfer-Encoding' => 'binary',
                     'Cache-Control' => 'no-transform, no-cache',
+                    'X-Guarantor-Form-Flow' => $flowKey,
                 ]);
             }
 
             // Fallback: serve placeholder PDF as raw binary (no temp file – avoids proxy/stream issues)
-            Log::warning('Guarantor form file not found or empty, serving placeholder', ['path' => $fullPath]);
-            $placeholderPdf = $this->getGuarantorFormPlaceholderPdf();
+            Log::warning('Guarantor form file not found or empty, serving placeholder', [
+                'path' => $fullPath,
+                'flow' => $flowKey,
+                'customer_type' => $customerType,
+            ]);
+            $placeholderPdf = $this->getGuarantorFormPlaceholderPdf($flowKey);
             if (strlen($placeholderPdf) === 0) {
                 $placeholderPdf = $this->getMinimalPdfFallback();
             }
@@ -961,6 +971,7 @@ class BNPLController extends Controller
                 'Content-Length' => (string) strlen($placeholderPdf),
                 'Content-Transfer-Encoding' => 'binary',
                 'Cache-Control' => 'no-transform, no-cache',
+                'X-Guarantor-Form-Flow' => $flowKey,
             ]);
         } catch (Exception $e) {
             Log::error('Guarantor form download error: ' . $e->getMessage());
@@ -969,12 +980,42 @@ class BNPLController extends Controller
     }
 
     /**
-     * Minimal valid PDF used when guarantor-form.pdf is not present.
-     * Replace public/documents/guarantor-form.pdf with the real form to serve it instead.
+     * @return array{0: string, 1: string} [relativePath, flowKey]
+     */
+    private function resolveGuarantorFormPath(?string $customerType): array
+    {
+        $type = strtolower(trim((string) $customerType));
+        $flowKey = in_array($type, ['sme', 'commercial'], true) ? 'sme' : 'residential';
+        $paths = config('bnpl.guarantor_form_paths', []);
+        $primary = $flowKey === 'sme'
+            ? ($paths['sme'] ?? 'documents/guarantor-form-sme.pdf')
+            : ($paths['residential'] ?? 'documents/guarantor-form-residential.pdf');
+
+        $primaryFull = public_path($primary);
+        if (is_file($primaryFull) && is_readable($primaryFull) && filesize($primaryFull) > 0) {
+            return [$primary, $flowKey];
+        }
+
+        // Residential (and unknown) can fall back to the legacy single-form path
+        if ($flowKey === 'residential') {
+            $legacy = config('bnpl.guarantor_form_path', 'documents/guarantor-form.pdf');
+            return [$legacy, $flowKey];
+        }
+
+        return [$primary, $flowKey];
+    }
+
+    /**
+     * Minimal valid PDF used when a flow-specific guarantor form PDF is not present.
      * Text strings use escaped parentheses \( \) so content displays correctly in viewers.
      */
-    private function getGuarantorFormPlaceholderPdf(): string
+    private function getGuarantorFormPlaceholderPdf(string $flowKey = 'residential'): string
     {
+        $label = $flowKey === 'sme' ? 'SME' : 'Residential';
+        $hintPath = $flowKey === 'sme'
+            ? 'public/documents/guarantor-form-sme.pdf'
+            : 'public/documents/guarantor-form-residential.pdf';
+
         $body = "%PDF-1.4\n";
         $o1 = strlen($body);
         $body .= "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n";
@@ -988,15 +1029,15 @@ class BNPLController extends Controller
         // PDF text: parentheses in strings must be escaped as \( and \)
         $streamContent = "BT\n"
             . "/F1 18 Tf\n72 720 Td\n"
-            . "\(Troosolar BNPL - Guarantor Form\) Tj\n"
+            . "\(Troosolar BNPL - Guarantor Form - {$label}\) Tj\n"
             . "0 -28 Td\n"
             . "/F1 12 Tf\n"
             . "\(This is a placeholder form.\) Tj\n"
             . "0 -20 Td\n"
             . "/F1 10 Tf\n"
-            . "\(To use your own form, place the PDF file at:\) Tj\n"
+            . "\(Upload the {$label} PDF in Admin - BNPL - Form.\) Tj\n"
             . "0 -16 Td\n"
-            . "\(public/documents/guarantor-form.pdf\) Tj\n"
+            . "\({$hintPath}\) Tj\n"
             . "0 -24 Td\n"
             . "\(Signed guarantor documents and undated cheques will be collected on the day of installation.\) Tj\n"
             . "ET\n";

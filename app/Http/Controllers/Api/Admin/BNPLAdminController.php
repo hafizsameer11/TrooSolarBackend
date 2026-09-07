@@ -529,22 +529,44 @@ class BNPLAdminController extends Controller
     }
 
     /**
-     * Upload BNPL guarantor form PDF (admin).
+     * List BNPL guarantor form upload status (Residential + SME).
+     * GET /api/admin/bnpl/guarantor-forms
+     */
+    public function guarantorFormStatus()
+    {
+        try {
+            return ResponseHelper::success([
+                'residential' => $this->guarantorFormMeta('residential'),
+                'sme' => $this->guarantorFormMeta('sme'),
+            ], 'Guarantor forms status retrieved');
+        } catch (Exception $e) {
+            Log::error('BNPL Admin Guarantor Form Status Error: ' . $e->getMessage());
+            return ResponseHelper::error('Failed to retrieve guarantor form status', 500);
+        }
+    }
+
+    /**
+     * Upload BNPL guarantor form PDF (admin) for a specific flow.
      * This file is served when users download the guarantor form after loan approval.
      * POST /api/admin/bnpl/guarantor-form
+     * FormData: guarantor_form (PDF), flow=residential|sme
      */
     public function uploadGuarantorForm(Request $request)
     {
         try {
             $request->validate([
                 'guarantor_form' => 'required|file|mimes:pdf|max:10240',
+                'flow' => 'required|in:residential,sme',
             ], [
                 'guarantor_form.required' => 'Please select a PDF file.',
                 'guarantor_form.mimes' => 'The file must be a PDF.',
                 'guarantor_form.max' => 'The file may not be greater than 10MB.',
+                'flow.required' => 'Please choose Residential or SME.',
+                'flow.in' => 'Flow must be residential or sme.',
             ]);
 
-            $relativePath = config('bnpl.guarantor_form_path', 'documents/guarantor-form.pdf');
+            $flow = strtolower((string) $request->input('flow'));
+            $relativePath = $this->guarantorFormRelativePathForFlow($flow);
             $fullPath = public_path($relativePath);
             $dir = dirname($fullPath);
             if (!is_dir($dir)) {
@@ -554,10 +576,13 @@ class BNPLAdminController extends Controller
             $file = $request->file('guarantor_form');
             $file->move($dir, basename($fullPath));
 
+            $label = $flow === 'sme' ? 'SME' : 'Residential';
+
             return ResponseHelper::success([
+                'flow' => $flow,
                 'path' => $relativePath,
-                'message' => 'Guarantor form updated. Users will download this file when they click Download Guarantor Form.',
-            ], 'Guarantor form uploaded successfully');
+                'message' => "{$label} guarantor form updated. Matching applicants will download this file.",
+            ], "{$label} guarantor form uploaded successfully");
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'status' => 'error',
@@ -568,6 +593,41 @@ class BNPLAdminController extends Controller
             Log::error('BNPL Admin Upload Guarantor Form Error: ' . $e->getMessage());
             return ResponseHelper::error('Failed to upload guarantor form: ' . $e->getMessage(), 500);
         }
+    }
+
+    private function guarantorFormRelativePathForFlow(string $flow): string
+    {
+        $paths = config('bnpl.guarantor_form_paths', []);
+        if ($flow === 'sme') {
+            return $paths['sme'] ?? 'documents/guarantor-form-sme.pdf';
+        }
+
+        return $paths['residential'] ?? 'documents/guarantor-form-residential.pdf';
+    }
+
+    private function guarantorFormMeta(string $flow): array
+    {
+        $relativePath = $this->guarantorFormRelativePathForFlow($flow);
+        $fullPath = public_path($relativePath);
+        $legacyPath = public_path(config('bnpl.guarantor_form_path', 'documents/guarantor-form.pdf'));
+
+        $uploaded = is_file($fullPath) && is_readable($fullPath) && filesize($fullPath) > 0;
+        $usingLegacy = false;
+        if (!$uploaded && $flow === 'residential' && is_file($legacyPath) && is_readable($legacyPath) && filesize($legacyPath) > 0) {
+            $uploaded = true;
+            $usingLegacy = true;
+            $relativePath = config('bnpl.guarantor_form_path', 'documents/guarantor-form.pdf');
+            $fullPath = $legacyPath;
+        }
+
+        return [
+            'flow' => $flow,
+            'path' => $relativePath,
+            'uploaded' => $uploaded,
+            'using_legacy' => $usingLegacy,
+            'size_bytes' => $uploaded ? filesize($fullPath) : 0,
+            'updated_at' => $uploaded ? date('c', filemtime($fullPath)) : null,
+        ];
     }
 
     /**

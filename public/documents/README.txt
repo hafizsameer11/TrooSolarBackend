@@ -1,4 +1,16 @@
-Place the BNPL Guarantor Form PDF here as: guarantor-form.pdf
+BNPL Guarantor Form PDFs (two flows)
 
-Customers will be able to download it from the BNPL flow after loan approval (Step 17 - Guarantor Form).
-The path is configurable via .env: GUARANTOR_FORM_PATH=documents/guarantor-form.pdf
+Upload from Admin → BNPL → Form, or place files here:
+
+  guarantor-form-residential.pdf  — Residential / Individual applications
+  guarantor-form-sme.pdf          — SME applications (also used for Commercial)
+
+Legacy (optional Residential fallback if residential file is missing):
+  guarantor-form.pdf
+
+Env overrides (relative to public/):
+  GUARANTOR_FORM_PATH_RESIDENTIAL=documents/guarantor-form-residential.pdf
+  GUARANTOR_FORM_PATH_SME=documents/guarantor-form-sme.pdf
+  GUARANTOR_FORM_PATH=documents/guarantor-form.pdf
+
+Customers download the form matching their application customer_type after loan approval.

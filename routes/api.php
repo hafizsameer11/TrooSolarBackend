@@ -478,6 +478,7 @@ Route::post('bundles/{bundle}/update', [BundleController::class, 'update'])
         Route::put('/applications/{id}/status', [BNPLAdminController::class, 'updateStatus']);
         Route::get('/guarantors', [BNPLAdminController::class, 'getGuarantors']);
         Route::put('/guarantors/{id}/status', [BNPLAdminController::class, 'updateGuarantorStatus']);
+        Route::get('/guarantor-forms', [BNPLAdminController::class, 'guarantorFormStatus']);
         Route::post('/guarantor-form', [BNPLAdminController::class, 'uploadGuarantorForm']);
         Route::post('/applications/{id}/guarantor', [BNPLAdminController::class, 'setApplicationGuarantor']);
         Route::put('/applications/{id}/installation-date/accept', [BNPLAdminController::class, 'acceptInstallationDate']);
