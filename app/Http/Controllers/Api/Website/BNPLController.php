@@ -183,12 +183,12 @@ class BNPLController extends Controller
                 'financing_partner_id' => 'nullable|integer|exists:partners,id',
                 'finance_agreement_accepted' => 'accepted',
                 'property_status' => 'nullable|string|in:owned,rented',
-                'bank_statement' => ($isAutoCreditCheck || $isPartnerFinancingPath)
+                'bank_statement' => $isAutoCreditCheck
                     ? 'nullable|file|mimes:pdf,jpg,jpeg,png|max:10240'
                     : ($canReusePriorDocs
                         ? 'nullable|file|mimes:pdf,jpg,jpeg,png|max:10240'
                         : 'required|file|mimes:pdf,jpg,jpeg,png|max:10240'),
-                'live_photo' => ($isAutoCreditCheck || $isPartnerFinancingPath)
+                'live_photo' => $isAutoCreditCheck
                     ? 'nullable|file|mimes:jpg,jpeg,png|max:5120'
                     : ($canReusePriorDocs
                         ? 'nullable|file|mimes:jpg,jpeg,png|max:5120'
@@ -479,7 +479,7 @@ class BNPLController extends Controller
                 $livePhotoPath = $priorApp->live_photo_path;
             }
 
-            if (! $isAutoCreditCheck && ! $isPartnerFinancingPath && (empty($bankStatementPath) || empty($livePhotoPath))) {
+            if (! $isAutoCreditCheck && (empty($bankStatementPath) || empty($livePhotoPath))) {
                 return ResponseHelper::error('Bank statement and live photo are required (upload new files or use a valid re-apply link).', 422);
             }
 
