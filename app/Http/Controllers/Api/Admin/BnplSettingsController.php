@@ -79,6 +79,10 @@ class BnplSettingsController extends Controller
                 'financing_path_troosolar_description' => 'nullable|string|max:2000',
                 'financing_path_partner_title' => 'nullable|string|max:255',
                 'financing_path_partner_description' => 'nullable|string|max:2000',
+                'financing_path_title' => 'nullable|string|max:255',
+                'financing_path_back_label' => 'nullable|string|max:100',
+                'financing_path_continue_troosolar_label' => 'nullable|string|max:255',
+                'financing_path_continue_partner_label' => 'nullable|string|max:255',
             ]);
 
             $settings = BnplSettings::get();
@@ -138,6 +142,10 @@ class BnplSettingsController extends Controller
                 'financing_path_troosolar_description',
                 'financing_path_partner_title',
                 'financing_path_partner_description',
+                'financing_path_title',
+                'financing_path_back_label',
+                'financing_path_continue_troosolar_label',
+                'financing_path_continue_partner_label',
             ] as $field) {
                 if ($request->has($field)) {
                     $settings->{$field} = $request->input($field);
