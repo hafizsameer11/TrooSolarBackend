@@ -35,6 +35,9 @@ class BnplSettings extends Model
         'financing_path_back_label',
         'financing_path_continue_troosolar_label',
         'financing_path_continue_partner_label',
+        'financing_path_troosolar_enabled',
+        'financing_path_partner_enabled',
+        'financing_path_unavailable_label',
         'finance_agreement_modal_title',
         'finance_agreement_checkbox_prefix',
         'finance_agreement_link_label',
@@ -54,6 +57,8 @@ class BnplSettings extends Model
         'minimum_loan_amount' => 'decimal:2',
         'credit_check_fee' => 'decimal:2',
         'loan_durations' => 'array',
+        'financing_path_troosolar_enabled' => 'boolean',
+        'financing_path_partner_enabled' => 'boolean',
     ];
 
     /**

@@ -18,6 +18,9 @@ class BnplFinancingPathCopy
             'partner_description' => "Partner financier — we'll get back to you within 24–72 hours after credit-check payment.",
             'continue_troosolar_label' => 'Continue to Full Loan Plan',
             'continue_partner_label' => 'Continue to Final Application',
+            'troosolar_enabled' => true,
+            'partner_enabled' => true,
+            'unavailable_label' => 'Currently unavailable',
         ];
     }
 
@@ -36,6 +39,9 @@ class BnplFinancingPathCopy
             'partner_description' => self::textOrDefault($settings->financing_path_partner_description ?? null, $defaults['partner_description']),
             'continue_troosolar_label' => self::textOrDefault($settings->financing_path_continue_troosolar_label ?? null, $defaults['continue_troosolar_label']),
             'continue_partner_label' => self::textOrDefault($settings->financing_path_continue_partner_label ?? null, $defaults['continue_partner_label']),
+            'troosolar_enabled' => self::boolOrDefault($settings->financing_path_troosolar_enabled ?? null, $defaults['troosolar_enabled']),
+            'partner_enabled' => self::boolOrDefault($settings->financing_path_partner_enabled ?? null, $defaults['partner_enabled']),
+            'unavailable_label' => self::textOrDefault($settings->financing_path_unavailable_label ?? null, $defaults['unavailable_label']),
         ];
     }
 
@@ -44,5 +50,14 @@ class BnplFinancingPathCopy
         $trimmed = trim((string) $value);
 
         return $trimmed !== '' ? $trimmed : $default;
+    }
+
+    private static function boolOrDefault(mixed $value, bool $default): bool
+    {
+        if ($value === null) {
+            return $default;
+        }
+
+        return filter_var($value, FILTER_VALIDATE_BOOLEAN);
     }
 }

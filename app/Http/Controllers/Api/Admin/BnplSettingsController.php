@@ -85,6 +85,9 @@ class BnplSettingsController extends Controller
                 'financing_path_back_label' => 'nullable|string|max:100',
                 'financing_path_continue_troosolar_label' => 'nullable|string|max:255',
                 'financing_path_continue_partner_label' => 'nullable|string|max:255',
+                'financing_path_troosolar_enabled' => 'nullable|boolean',
+                'financing_path_partner_enabled' => 'nullable|boolean',
+                'financing_path_unavailable_label' => 'nullable|string|max:255',
                 'finance_agreement_modal_title' => 'nullable|string|max:255',
                 'finance_agreement_checkbox_prefix' => 'nullable|string|max:255',
                 'finance_agreement_link_label' => 'nullable|string|max:255',
@@ -155,6 +158,7 @@ class BnplSettingsController extends Controller
                 'financing_path_back_label',
                 'financing_path_continue_troosolar_label',
                 'financing_path_continue_partner_label',
+                'financing_path_unavailable_label',
                 'finance_agreement_modal_title',
                 'finance_agreement_checkbox_prefix',
                 'finance_agreement_link_label',
@@ -166,6 +170,19 @@ class BnplSettingsController extends Controller
                 if ($request->has($field)) {
                     $settings->{$field} = $request->input($field);
                 }
+            }
+
+            if ($request->has('financing_path_troosolar_enabled')) {
+                $settings->financing_path_troosolar_enabled = filter_var(
+                    $request->input('financing_path_troosolar_enabled'),
+                    FILTER_VALIDATE_BOOLEAN
+                );
+            }
+            if ($request->has('financing_path_partner_enabled')) {
+                $settings->financing_path_partner_enabled = filter_var(
+                    $request->input('financing_path_partner_enabled'),
+                    FILTER_VALIDATE_BOOLEAN
+                );
             }
 
             $settings->save();
