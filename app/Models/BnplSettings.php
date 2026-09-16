@@ -45,6 +45,21 @@ class BnplSettings extends Model
         'finance_agreement_accept_label',
         'finance_agreement_residential_text',
         'finance_agreement_sme_text',
+        'credit_check_intro',
+        'credit_check_continue_label',
+        'credit_check_unavailable_label',
+        'credit_check_residential_auto_enabled',
+        'credit_check_residential_auto_title',
+        'credit_check_residential_auto_description',
+        'credit_check_residential_manual_enabled',
+        'credit_check_residential_manual_title',
+        'credit_check_residential_manual_description',
+        'credit_check_sme_auto_enabled',
+        'credit_check_sme_auto_title',
+        'credit_check_sme_auto_description',
+        'credit_check_sme_manual_enabled',
+        'credit_check_sme_manual_title',
+        'credit_check_sme_manual_description',
     ];
 
     protected $casts = [
@@ -59,6 +74,10 @@ class BnplSettings extends Model
         'loan_durations' => 'array',
         'financing_path_troosolar_enabled' => 'boolean',
         'financing_path_partner_enabled' => 'boolean',
+        'credit_check_residential_auto_enabled' => 'boolean',
+        'credit_check_residential_manual_enabled' => 'boolean',
+        'credit_check_sme_auto_enabled' => 'boolean',
+        'credit_check_sme_manual_enabled' => 'boolean',
     ];
 
     /**

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Helpers\ResponseHelper;
 use App\Http\Controllers\Controller;
 use App\Models\BnplSettings;
+use App\Support\BnplCreditCheckMethodCopy;
 use App\Support\BnplFinanceAgreement;
 use App\Support\BnplFinancingPathCopy;
 use App\Support\BnplTermsGate;
@@ -42,6 +43,7 @@ class BnplSettingsController extends Controller
                 'terms_gate' => BnplTermsGate::fromSettings($settings),
                 'financing_path' => BnplFinancingPathCopy::fromSettings($settings),
                 'finance_agreement' => BnplFinanceAgreement::fromSettings($settings),
+                'credit_check_method' => BnplCreditCheckMethodCopy::fromSettings($settings),
             ], 'BNPL settings retrieved successfully');
         } catch (Exception $e) {
             Log::error('BNPL Settings Show Error: ' . $e->getMessage());
@@ -95,6 +97,21 @@ class BnplSettingsController extends Controller
                 'finance_agreement_accept_label' => 'nullable|string|max:100',
                 'finance_agreement_residential_text' => 'nullable|string|max:50000',
                 'finance_agreement_sme_text' => 'nullable|string|max:50000',
+                'credit_check_intro' => 'nullable|string|max:2000',
+                'credit_check_continue_label' => 'nullable|string|max:100',
+                'credit_check_unavailable_label' => 'nullable|string|max:255',
+                'credit_check_residential_auto_enabled' => 'nullable|boolean',
+                'credit_check_residential_auto_title' => 'nullable|string|max:255',
+                'credit_check_residential_auto_description' => 'nullable|string|max:2000',
+                'credit_check_residential_manual_enabled' => 'nullable|boolean',
+                'credit_check_residential_manual_title' => 'nullable|string|max:255',
+                'credit_check_residential_manual_description' => 'nullable|string|max:2000',
+                'credit_check_sme_auto_enabled' => 'nullable|boolean',
+                'credit_check_sme_auto_title' => 'nullable|string|max:255',
+                'credit_check_sme_auto_description' => 'nullable|string|max:2000',
+                'credit_check_sme_manual_enabled' => 'nullable|boolean',
+                'credit_check_sme_manual_title' => 'nullable|string|max:255',
+                'credit_check_sme_manual_description' => 'nullable|string|max:2000',
             ]);
 
             $settings = BnplSettings::get();
@@ -166,6 +183,17 @@ class BnplSettingsController extends Controller
                 'finance_agreement_accept_label',
                 'finance_agreement_residential_text',
                 'finance_agreement_sme_text',
+                'credit_check_intro',
+                'credit_check_continue_label',
+                'credit_check_unavailable_label',
+                'credit_check_residential_auto_title',
+                'credit_check_residential_auto_description',
+                'credit_check_residential_manual_title',
+                'credit_check_residential_manual_description',
+                'credit_check_sme_auto_title',
+                'credit_check_sme_auto_description',
+                'credit_check_sme_manual_title',
+                'credit_check_sme_manual_description',
             ] as $field) {
                 if ($request->has($field)) {
                     $settings->{$field} = $request->input($field);
@@ -183,6 +211,17 @@ class BnplSettingsController extends Controller
                     $request->input('financing_path_partner_enabled'),
                     FILTER_VALIDATE_BOOLEAN
                 );
+            }
+
+            foreach ([
+                'credit_check_residential_auto_enabled',
+                'credit_check_residential_manual_enabled',
+                'credit_check_sme_auto_enabled',
+                'credit_check_sme_manual_enabled',
+            ] as $boolField) {
+                if ($request->has($boolField)) {
+                    $settings->{$boolField} = filter_var($request->input($boolField), FILTER_VALIDATE_BOOLEAN);
+                }
             }
 
             $settings->save();
@@ -208,6 +247,7 @@ class BnplSettingsController extends Controller
                 'terms_gate' => BnplTermsGate::fromSettings($settings),
                 'financing_path' => BnplFinancingPathCopy::fromSettings($settings),
                 'finance_agreement' => BnplFinanceAgreement::fromSettings($settings),
+                'credit_check_method' => BnplCreditCheckMethodCopy::fromSettings($settings),
             ], 'BNPL settings updated successfully');
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([

@@ -7,6 +7,7 @@ use App\Helpers\ResponseHelper;
 use App\Models\CheckoutSetting;
 use App\Models\Partner;
 use App\Models\State;
+use App\Support\BnplCreditCheckMethodCopy;
 use App\Support\BnplFinanceAgreement;
 use App\Support\BnplFinancingPathCopy;
 use App\Support\BnplTermsGate;
@@ -184,6 +185,7 @@ class ConfigurationController extends Controller
             $payload['terms_gate'] = BnplTermsGate::fromSettings($bnplSettings);
             $payload['financing_path'] = BnplFinancingPathCopy::fromSettings($bnplSettings);
             $payload['finance_agreement'] = BnplFinanceAgreement::fromSettings($bnplSettings);
+            $payload['credit_check_method'] = BnplCreditCheckMethodCopy::fromSettings($bnplSettings);
 
             return ResponseHelper::success($payload, 'Loan configuration retrieved successfully');
         } catch (\Exception $e) {
