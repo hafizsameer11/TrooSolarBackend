@@ -141,9 +141,22 @@ class PartnerController extends Controller
     {
         try {
             $request->validate([
-                'partner_id' => 'required|exists:partners,id',
+                'partner_id' => 'nullable|integer|exists:partners,id',
+                'partner_ids' => 'nullable|array|min:1',
+                'partner_ids.*' => 'integer|exists:partners,id',
                 'loan_application_id' => 'nullable|integer|exists:loan_applications,id',
             ]);
+
+            $partnerIds = [];
+            if ($request->filled('partner_ids') && is_array($request->partner_ids)) {
+                $partnerIds = array_values(array_unique(array_map('intval', $request->partner_ids)));
+            } elseif ($request->filled('partner_id')) {
+                $partnerIds = [(int) $request->partner_id];
+            }
+
+            if (empty($partnerIds)) {
+                return ResponseHelper::error('Select at least one financing partner.', 422);
+            }
 
             $user = User::findOrFail($userId);
 
@@ -164,32 +177,90 @@ class PartnerController extends Controller
                 return ResponseHelper::error('No loan application found for this user.', 404);
             }
 
-            $partner = Partner::findOrFail($request->partner_id);
-            $partnerEmail = trim((string) ($partner->email ?? ''));
-            if ($partnerEmail === '' || ! filter_var($partnerEmail, FILTER_VALIDATE_EMAIL)) {
-                return ResponseHelper::error('This financing partner has no valid email address configured.', 422);
+            $linkAccount = LinkAccount::where('user_id', $userId)->latest()->first();
+            $sent = [];
+            $skipped = [];
+            $failed = [];
+            $lastPartnerId = null;
+
+            foreach ($partnerIds as $partnerId) {
+                $partner = Partner::find($partnerId);
+                if (! $partner) {
+                    $failed[] = ['partner_id' => $partnerId, 'reason' => 'Partner not found'];
+                    continue;
+                }
+                if ($partner->isTroosolar()) {
+                    $skipped[] = ['partner_id' => $partnerId, 'reason' => 'Troosolar is excluded from partner email send'];
+                    continue;
+                }
+
+                $partnerEmail = trim((string) ($partner->email ?? ''));
+                if ($partnerEmail === '' || ! filter_var($partnerEmail, FILTER_VALIDATE_EMAIL)) {
+                    $failed[] = [
+                        'partner_id' => $partnerId,
+                        'name' => $partner->name,
+                        'reason' => 'No valid email address configured',
+                    ];
+                    continue;
+                }
+
+                try {
+                    Mail::to($partnerEmail)->send(
+                        new SendUserLoanInfoToPartner($user, $loanApplication, $partner, $linkAccount)
+                    );
+                    $sent[] = [
+                        'partner_id' => (int) $partner->id,
+                        'name' => $partner->name,
+                        'email' => $partnerEmail,
+                    ];
+                    $lastPartnerId = (int) $partner->id;
+                } catch (Throwable $mailEx) {
+                    Log::error('Error sending email to one partner', [
+                        'user_id' => $userId,
+                        'partner_id' => $partnerId,
+                        'message' => $mailEx->getMessage(),
+                    ]);
+                    $failed[] = [
+                        'partner_id' => $partnerId,
+                        'name' => $partner->name,
+                        'reason' => $mailEx->getMessage(),
+                    ];
+                }
             }
 
-            $linkAccount = LinkAccount::where('user_id', $userId)->latest()->first();
+            if (empty($sent)) {
+                $msg = 'No emails were sent.';
+                if (! empty($failed)) {
+                    $msg .= ' '.($failed[0]['reason'] ?? 'Check partner email settings.');
+                } elseif (! empty($skipped)) {
+                    $msg .= ' Troosolar cannot be used for partner email send.';
+                }
 
-            Mail::to($partnerEmail)->send(
-                new SendUserLoanInfoToPartner($user, $loanApplication, $partner, $linkAccount)
-            );
+                return ResponseHelper::error($msg, 422);
+            }
 
             $loanStatus = LoanStatus::where('loan_application_id', $loanApplication->id)->first();
             if ($loanStatus) {
                 $loanStatus->update([
                     'send_status' => 'active',
                     'send_date' => now(),
-                    'partner_id' => $partner->id,
+                    'partner_id' => $lastPartnerId,
                 ]);
             }
+
+            $count = count($sent);
 
             return ResponseHelper::success([
                 'user_id' => (int) $userId,
                 'loan_application_id' => (int) $loanApplication->id,
-                'partner_id' => (int) $partner->id,
-            ], 'The email has been sent to the partner.');
+                'partner_id' => $lastPartnerId,
+                'sent' => $sent,
+                'skipped' => $skipped,
+                'failed' => $failed,
+                'sent_count' => $count,
+            ], $count === 1
+                ? 'The email has been sent to the partner.'
+                : "Emails have been sent to {$count} partners.");
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'status' => 'error',
@@ -203,6 +274,7 @@ class PartnerController extends Controller
                 'user_id' => $userId,
                 'loan_application_id' => $request->input('loan_application_id'),
                 'partner_id' => $request->input('partner_id'),
+                'partner_ids' => $request->input('partner_ids'),
                 'message' => $ex->getMessage(),
                 'exception' => $ex::class,
                 'file' => $ex->getFile(),
