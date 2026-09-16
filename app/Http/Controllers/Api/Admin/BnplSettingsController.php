@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Helpers\ResponseHelper;
 use App\Http\Controllers\Controller;
 use App\Models\BnplSettings;
+use App\Support\BnplFinanceAgreement;
 use App\Support\BnplFinancingPathCopy;
 use App\Support\BnplTermsGate;
 use Exception;
@@ -40,6 +41,7 @@ class BnplSettingsController extends Controller
                 'loan_durations' => $settings->loan_durations ?? [3, 6, 9, 12],
                 'terms_gate' => BnplTermsGate::fromSettings($settings),
                 'financing_path' => BnplFinancingPathCopy::fromSettings($settings),
+                'finance_agreement' => BnplFinanceAgreement::fromSettings($settings),
             ], 'BNPL settings retrieved successfully');
         } catch (Exception $e) {
             Log::error('BNPL Settings Show Error: ' . $e->getMessage());
@@ -83,6 +85,13 @@ class BnplSettingsController extends Controller
                 'financing_path_back_label' => 'nullable|string|max:100',
                 'financing_path_continue_troosolar_label' => 'nullable|string|max:255',
                 'financing_path_continue_partner_label' => 'nullable|string|max:255',
+                'finance_agreement_modal_title' => 'nullable|string|max:255',
+                'finance_agreement_checkbox_prefix' => 'nullable|string|max:255',
+                'finance_agreement_link_label' => 'nullable|string|max:255',
+                'finance_agreement_close_label' => 'nullable|string|max:100',
+                'finance_agreement_accept_label' => 'nullable|string|max:100',
+                'finance_agreement_residential_text' => 'nullable|string|max:50000',
+                'finance_agreement_sme_text' => 'nullable|string|max:50000',
             ]);
 
             $settings = BnplSettings::get();
@@ -146,6 +155,13 @@ class BnplSettingsController extends Controller
                 'financing_path_back_label',
                 'financing_path_continue_troosolar_label',
                 'financing_path_continue_partner_label',
+                'finance_agreement_modal_title',
+                'finance_agreement_checkbox_prefix',
+                'finance_agreement_link_label',
+                'finance_agreement_close_label',
+                'finance_agreement_accept_label',
+                'finance_agreement_residential_text',
+                'finance_agreement_sme_text',
             ] as $field) {
                 if ($request->has($field)) {
                     $settings->{$field} = $request->input($field);
@@ -174,6 +190,7 @@ class BnplSettingsController extends Controller
                 'loan_durations' => $settings->loan_durations ?? [3, 6, 9, 12],
                 'terms_gate' => BnplTermsGate::fromSettings($settings),
                 'financing_path' => BnplFinancingPathCopy::fromSettings($settings),
+                'finance_agreement' => BnplFinanceAgreement::fromSettings($settings),
             ], 'BNPL settings updated successfully');
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([

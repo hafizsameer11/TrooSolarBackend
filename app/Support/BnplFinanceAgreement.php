@@ -2,9 +2,24 @@
 
 namespace App\Support;
 
+use App\Models\BnplSettings;
+
 class BnplFinanceAgreement
 {
-    public static function residentialText(): string
+    public static function defaults(): array
+    {
+        return [
+            'modal_title' => 'Finance Agreement',
+            'checkbox_prefix' => 'I accept the',
+            'link_label' => 'Finance Agreement',
+            'close_label' => 'Close',
+            'accept_label' => 'I Accept',
+            'residential_text' => self::defaultResidentialText(),
+            'sme_text' => self::defaultSmeText(),
+        ];
+    }
+
+    public static function defaultResidentialText(): string
     {
         return <<<'TXT'
 AUTHORITY TO DEBIT MY ACCOUNT:
@@ -13,7 +28,7 @@ In accordance with the Terms and Conditions of the sale agreement, I authorize T
 TXT;
     }
 
-    public static function smeText(): string
+    public static function defaultSmeText(): string
     {
         return <<<'TXT'
 PROMISE TO PURCHASE/LEASE:
@@ -39,12 +54,45 @@ I/we authorize you to make any enquiry you consider necessary and appropriate fo
 TXT;
     }
 
-    public static function forCustomerType(?string $customerType): string
+    public static function fromSettings(?BnplSettings $settings = null): array
+    {
+        $defaults = self::defaults();
+        $settings = $settings ?? BnplSettings::get();
+
+        return [
+            'modal_title' => self::textOrDefault($settings->finance_agreement_modal_title ?? null, $defaults['modal_title']),
+            'checkbox_prefix' => self::textOrDefault($settings->finance_agreement_checkbox_prefix ?? null, $defaults['checkbox_prefix']),
+            'link_label' => self::textOrDefault($settings->finance_agreement_link_label ?? null, $defaults['link_label']),
+            'close_label' => self::textOrDefault($settings->finance_agreement_close_label ?? null, $defaults['close_label']),
+            'accept_label' => self::textOrDefault($settings->finance_agreement_accept_label ?? null, $defaults['accept_label']),
+            'residential_text' => self::textOrDefault($settings->finance_agreement_residential_text ?? null, $defaults['residential_text']),
+            'sme_text' => self::textOrDefault($settings->finance_agreement_sme_text ?? null, $defaults['sme_text']),
+        ];
+    }
+
+    public static function residentialText(?BnplSettings $settings = null): string
+    {
+        return self::fromSettings($settings)['residential_text'];
+    }
+
+    public static function smeText(?BnplSettings $settings = null): string
+    {
+        return self::fromSettings($settings)['sme_text'];
+    }
+
+    public static function forCustomerType(?string $customerType, ?BnplSettings $settings = null): string
     {
         $type = strtolower(trim((string) $customerType));
 
         return in_array($type, ['sme', 'commercial'], true)
-            ? self::smeText()
-            : self::residentialText();
+            ? self::smeText($settings)
+            : self::residentialText($settings);
+    }
+
+    private static function textOrDefault(?string $value, string $default): string
+    {
+        $trimmed = trim((string) $value);
+
+        return $trimmed !== '' ? $trimmed : $default;
     }
 }

@@ -615,7 +615,7 @@ class BNPLController extends Controller
                 'accepted' => true,
                 'accepted_at' => now()->toIso8601String(),
                 'customer_type' => $data['customer_type'] ?? null,
-                'text' => BnplFinanceAgreement::forCustomerType($data['customer_type'] ?? null),
+                'text' => BnplFinanceAgreement::forCustomerType($data['customer_type'] ?? null, $settings),
             ];
             $planSnapshotForDb['financing'] = [
                 'path' => $financingPath,

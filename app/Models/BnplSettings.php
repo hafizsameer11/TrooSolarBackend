@@ -35,6 +35,13 @@ class BnplSettings extends Model
         'financing_path_back_label',
         'financing_path_continue_troosolar_label',
         'financing_path_continue_partner_label',
+        'finance_agreement_modal_title',
+        'finance_agreement_checkbox_prefix',
+        'finance_agreement_link_label',
+        'finance_agreement_close_label',
+        'finance_agreement_accept_label',
+        'finance_agreement_residential_text',
+        'finance_agreement_sme_text',
     ];
 
     protected $casts = [
