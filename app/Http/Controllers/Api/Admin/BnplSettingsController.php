@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Helpers\ResponseHelper;
 use App\Http\Controllers\Controller;
 use App\Models\BnplSettings;
+use App\Support\BnplFinancingPathCopy;
 use App\Support\BnplTermsGate;
 use Exception;
 use Illuminate\Http\Request;
@@ -38,6 +39,7 @@ class BnplSettingsController extends Controller
                 'credit_check_fee' => (float) ($settings->credit_check_fee ?? 1000),
                 'loan_durations' => $settings->loan_durations ?? [3, 6, 9, 12],
                 'terms_gate' => BnplTermsGate::fromSettings($settings),
+                'financing_path' => BnplFinancingPathCopy::fromSettings($settings),
             ], 'BNPL settings retrieved successfully');
         } catch (Exception $e) {
             Log::error('BNPL Settings Show Error: ' . $e->getMessage());
@@ -72,6 +74,11 @@ class BnplSettingsController extends Controller
                 'terms_gate_proceed_label' => 'nullable|string|max:100',
                 'terms_of_service_url' => 'nullable|string|max:500',
                 'terms_privacy_policy_url' => 'nullable|string|max:500',
+                'financing_path_intro' => 'nullable|string|max:2000',
+                'financing_path_troosolar_title' => 'nullable|string|max:255',
+                'financing_path_troosolar_description' => 'nullable|string|max:2000',
+                'financing_path_partner_title' => 'nullable|string|max:255',
+                'financing_path_partner_description' => 'nullable|string|max:2000',
             ]);
 
             $settings = BnplSettings::get();
@@ -126,6 +133,11 @@ class BnplSettingsController extends Controller
                 'terms_gate_proceed_label',
                 'terms_of_service_url',
                 'terms_privacy_policy_url',
+                'financing_path_intro',
+                'financing_path_troosolar_title',
+                'financing_path_troosolar_description',
+                'financing_path_partner_title',
+                'financing_path_partner_description',
             ] as $field) {
                 if ($request->has($field)) {
                     $settings->{$field} = $request->input($field);
@@ -153,6 +165,7 @@ class BnplSettingsController extends Controller
                 'credit_check_fee' => (float) ($settings->credit_check_fee ?? 1000),
                 'loan_durations' => $settings->loan_durations ?? [3, 6, 9, 12],
                 'terms_gate' => BnplTermsGate::fromSettings($settings),
+                'financing_path' => BnplFinancingPathCopy::fromSettings($settings),
             ], 'BNPL settings updated successfully');
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([

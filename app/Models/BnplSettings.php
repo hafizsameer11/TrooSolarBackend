@@ -26,6 +26,11 @@ class BnplSettings extends Model
         'terms_gate_proceed_label',
         'terms_of_service_url',
         'terms_privacy_policy_url',
+        'financing_path_intro',
+        'financing_path_troosolar_title',
+        'financing_path_troosolar_description',
+        'financing_path_partner_title',
+        'financing_path_partner_description',
     ];
 
     protected $casts = [

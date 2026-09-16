@@ -180,7 +180,7 @@ class BNPLController extends Controller
                     ? 'required|in:partner'
                     : 'required|in:auto,manual',
                 'financing_path' => 'required|in:partner,troosolar',
-                'financing_partner_id' => 'required|integer|exists:partners,id',
+                'financing_partner_id' => 'nullable|integer|exists:partners,id',
                 'finance_agreement_accepted' => 'accepted',
                 'property_status' => 'nullable|string|in:owned,rented',
                 'bank_statement' => ($isAutoCreditCheck || $isPartnerFinancingPath)
@@ -310,15 +310,24 @@ class BNPLController extends Controller
 
             $financingPath = strtolower((string) ($data['financing_path'] ?? 'troosolar'));
             $financingPartnerId = null;
-            if (empty($data['financing_partner_id'])) {
-                return ResponseHelper::error('Please select a financing option from the list.', 422);
+
+            if (! empty($data['financing_partner_id'])) {
+                $partner = Partner::find((int) $data['financing_partner_id']);
+                if (! $partner || ! $partner->isActive()) {
+                    return ResponseHelper::error('Selected financing option is not available. Ask admin to activate it under Settings → Financing Partner.', 422);
+                }
+                $financingPartnerId = (int) $partner->id;
+                $financingPath = $partner->isTroosolar() ? 'troosolar' : 'partner';
+            } elseif ($financingPath === 'troosolar') {
+                $partner = Partner::ensureTroosolarPartner();
+                if (! $partner->isActive()) {
+                    return ResponseHelper::error('Troosolar financing is not currently active. Ask admin to activate it under Settings → Financing Partner.', 422);
+                }
+                $financingPartnerId = (int) $partner->id;
+            } elseif ($financingPath !== 'partner') {
+                return ResponseHelper::error('Please select a financing option.', 422);
             }
-            $partner = Partner::find((int) $data['financing_partner_id']);
-            if (! $partner || ! $partner->isActive()) {
-                return ResponseHelper::error('Selected financing option is not available. Ask admin to activate it under Settings → Financing Partner.', 422);
-            }
-            $financingPartnerId = (int) $partner->id;
-            $financingPath = $partner->isTroosolar() ? 'troosolar' : 'partner';
+
             $isPartnerFinancingPath = $financingPath === 'partner';
             $data['financing_path'] = $financingPath;
 
