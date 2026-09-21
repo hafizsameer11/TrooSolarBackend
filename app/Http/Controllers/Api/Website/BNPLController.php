@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Website;
 use App\Helpers\ResponseHelper;
 use App\Http\Controllers\Controller;
 use App\Support\BundlePricing;
+use App\Models\Bundles;
 use App\Models\Guarantor;
 use App\Models\LoanApplication;
 use App\Models\LoanCalculation;
