@@ -112,6 +112,10 @@ class BnplSettingsController extends Controller
                 'credit_check_sme_manual_enabled' => 'nullable|boolean',
                 'credit_check_sme_manual_title' => 'nullable|string|max:255',
                 'credit_check_sme_manual_description' => 'nullable|string|max:2000',
+                'credit_check_partner_fee_title' => 'nullable|string|max:255',
+                'credit_check_partner_fee_intro' => 'nullable|string|max:2000',
+                'credit_check_partner_success_message' => 'nullable|string|max:2000',
+                'credit_check_partner_routed_note' => 'nullable|string|max:2000',
             ]);
 
             $settings = BnplSettings::get();
@@ -194,6 +198,10 @@ class BnplSettingsController extends Controller
                 'credit_check_sme_auto_description',
                 'credit_check_sme_manual_title',
                 'credit_check_sme_manual_description',
+                'credit_check_partner_fee_title',
+                'credit_check_partner_fee_intro',
+                'credit_check_partner_success_message',
+                'credit_check_partner_routed_note',
             ] as $field) {
                 if ($request->has($field)) {
                     $settings->{$field} = $request->input($field);

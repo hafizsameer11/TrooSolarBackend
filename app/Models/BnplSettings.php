@@ -60,6 +60,10 @@ class BnplSettings extends Model
         'credit_check_sme_manual_enabled',
         'credit_check_sme_manual_title',
         'credit_check_sme_manual_description',
+        'credit_check_partner_fee_title',
+        'credit_check_partner_fee_intro',
+        'credit_check_partner_success_message',
+        'credit_check_partner_routed_note',
     ];
 
     protected $casts = [
