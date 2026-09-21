@@ -351,15 +351,16 @@ class BNPLController extends Controller
             }
 
             // Build order_items_snapshot from bundle_ids and product_ids for creating order items when down payment is confirmed
+            // (Troosolar + Partner paths both hit this on /bnpl/apply)
             $orderItemsSnapshot = [];
             $bundleIds = $data['bundle_ids'] ?? [];
             $productIds = $data['product_ids'] ?? [];
             foreach ($bundleIds as $bundleId) {
-                $bundle = Bundles::find($bundleId);
+                $bundle = \App\Models\Bundles::find($bundleId);
                 if ($bundle) {
                     $unitPrice = BundlePricing::bnplUnitPrice($bundle);
                     $orderItemsSnapshot[] = [
-                        'itemable_type' => Bundles::class,
+                        'itemable_type' => \App\Models\Bundles::class,
                         'itemable_id' => (int) $bundleId,
                         'quantity' => 1,
                         'unit_price' => $unitPrice,
