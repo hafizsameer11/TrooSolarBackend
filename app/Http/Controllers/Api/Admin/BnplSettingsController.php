@@ -203,7 +203,8 @@ class BnplSettingsController extends Controller
                 'credit_check_partner_success_message',
                 'credit_check_partner_routed_note',
             ] as $field) {
-                if ($request->has($field)) {
+                // exists() so empty strings still clear/update (has() treats "" as missing)
+                if ($request->exists($field)) {
                     $settings->{$field} = $request->input($field);
                 }
             }
@@ -227,7 +228,7 @@ class BnplSettingsController extends Controller
                 'credit_check_sme_auto_enabled',
                 'credit_check_sme_manual_enabled',
             ] as $boolField) {
-                if ($request->has($boolField)) {
+                if ($request->exists($boolField)) {
                     $settings->{$boolField} = filter_var($request->input($boolField), FILTER_VALIDATE_BOOLEAN);
                 }
             }
