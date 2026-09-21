@@ -37,7 +37,7 @@ class BnplCreditCheckMethodCopy
                 'manual_description' => 'Pay the verification fee first, then upload your bank statement and selfie.',
                 'manual_upload_intro' => 'Upload your business documents for manual credit review.',
                 'manual_docs_title' => 'Required Documents',
-                'manual_bank_label' => 'Business Bank Statement (Last 6 Months)',
+                'manual_bank_label' => 'Business Bank Account Statement (Last 6 Months)',
                 'manual_bank_hint' => 'Accepted formats: PDF, JPG, PNG (Max 10MB)',
                 'manual_selfie_label' => 'Live Photo / Selfie',
                 'manual_selfie_button' => 'Tap to Open Camera & Take Selfie',
