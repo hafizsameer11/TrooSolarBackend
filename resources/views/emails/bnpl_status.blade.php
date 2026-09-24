@@ -55,6 +55,40 @@
                 Or copy this link into your browser:<br>
                 <a href="{{ $continueUrl }}" style="word-break: break-all; color: #273e8e;">{{ $continueUrl }}</a>
             </p>
+        @elseif($status === 'partner_offer')
+            @if(!empty($partnerOffer))
+            <div class="details">
+                <p style="margin-bottom:12px;"><strong>Partner offer terms</strong></p>
+                @if($partnerOffer['interest_rate'] !== null)
+                    <p><strong>Interest rate:</strong> {{ rtrim(rtrim(number_format($partnerOffer['interest_rate'], 4, '.', ''), '0'), '.') }}%</p>
+                @endif
+                @if($partnerOffer['initial_deposit'] !== null)
+                    <p><strong>Initial deposit:</strong> ₦{{ number_format($partnerOffer['initial_deposit'], 2) }}</p>
+                @endif
+                @if($partnerOffer['admin_fees'] !== null)
+                    <p><strong>Admin fees:</strong> ₦{{ number_format($partnerOffer['admin_fees'], 2) }}</p>
+                @endif
+                @if($partnerOffer['loan_amount'] !== null)
+                    <p><strong>Loan amount:</strong> ₦{{ number_format($partnerOffer['loan_amount'], 2) }}</p>
+                @endif
+                @if($partnerOffer['repayment_amount'] !== null)
+                    <p><strong>Repayment amount:</strong> ₦{{ number_format($partnerOffer['repayment_amount'], 2) }}</p>
+                @endif
+                @if(!empty($partnerOffer['tenor']))
+                    <p><strong>Tenor:</strong> {{ $partnerOffer['tenor'] }} {{ $partnerOffer['tenor'] == 1 ? 'month' : 'months' }}</p>
+                @endif
+                @if(!empty($partnerOffer['documents_count']))
+                    <p><strong>Supporting documents:</strong> {{ $partnerOffer['documents_count'] }} attached to this email</p>
+                @endif
+            </div>
+            @endif
+            <p>
+                <a href="{{ $continueUrl }}" class="btn" target="_blank" rel="noopener noreferrer">Review partner offer</a>
+            </p>
+            <p style="font-size: 14px; color: #666;">
+                Or copy this link into your browser:<br>
+                <a href="{{ $continueUrl }}" style="word-break: break-all; color: #273e8e;">{{ $continueUrl }}</a>
+            </p>
         @endif
 
         @include('emails.partials.support_closing')

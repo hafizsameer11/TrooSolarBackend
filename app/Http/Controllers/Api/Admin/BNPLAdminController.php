@@ -352,9 +352,17 @@ class BNPLAdminController extends Controller
             $settings = BnplSettings::get();
             $allowedDurations = $settings->loan_durations ?? [3, 6, 9, 12];
             $request->validate([
-                'status' => 'required|in:pending,approved,rejected,counter_offer',
+                'status' => 'required|in:pending,approved,rejected,counter_offer,partner_offer',
                 'counter_offer_min_deposit' => 'required_if:status,counter_offer|numeric|min:0',
                 'counter_offer_min_tenor' => 'required_if:status,counter_offer|integer|in:' . implode(',', $allowedDurations),
+                'partner_offer_interest_rate' => 'required_if:status,partner_offer|numeric|min:0|max:100',
+                'partner_offer_initial_deposit' => 'required_if:status,partner_offer|numeric|min:0',
+                'partner_offer_admin_fees' => 'nullable|numeric|min:0',
+                'partner_offer_repayment_amount' => 'required_if:status,partner_offer|numeric|min:0',
+                'partner_offer_loan_amount' => 'required_if:status,partner_offer|numeric|min:0',
+                'partner_offer_tenor' => 'required_if:status,partner_offer|integer|min:1|max:120',
+                'partner_offer_documents' => 'nullable|array',
+                'partner_offer_documents.*' => 'file|max:10240|mimes:pdf,jpg,jpeg,png,doc,docx',
                 'admin_notes' => 'nullable|string|max:1000',
             ]);
 
@@ -372,6 +380,42 @@ class BNPLAdminController extends Controller
             if ($request->status === 'counter_offer') {
                 $application->counter_offer_min_deposit = $request->counter_offer_min_deposit;
                 $application->counter_offer_min_tenor = $request->counter_offer_min_tenor;
+                $application->save();
+            }
+
+            if ($request->status === 'partner_offer') {
+                $application->partner_offer_interest_rate = $request->partner_offer_interest_rate;
+                $application->partner_offer_initial_deposit = $request->partner_offer_initial_deposit;
+                $application->partner_offer_admin_fees = $request->input('partner_offer_admin_fees', 0);
+                $application->partner_offer_repayment_amount = $request->partner_offer_repayment_amount;
+                $application->partner_offer_loan_amount = $request->partner_offer_loan_amount;
+                $application->partner_offer_tenor = (int) $request->partner_offer_tenor;
+
+                $storedDocs = is_array($application->partner_offer_documents)
+                    ? $application->partner_offer_documents
+                    : [];
+                if ($request->hasFile('partner_offer_documents')) {
+                    foreach ($request->file('partner_offer_documents') as $file) {
+                        if (! $file || ! $file->isValid()) {
+                            continue;
+                        }
+                        $path = $file->store(
+                            'bnpl/partner-offers/'.$application->id,
+                            'public'
+                        );
+                        if ($path) {
+                            $storedDocs[] = [
+                                'path' => $path,
+                                'name' => $file->getClientOriginalName(),
+                                'mime' => $file->getClientMimeType(),
+                                'uploaded_at' => now()->toIso8601String(),
+                            ];
+                        }
+                    }
+                }
+                $application->partner_offer_documents = $storedDocs;
+                $application->loan_amount = (float) $request->partner_offer_repayment_amount;
+                $application->repayment_duration = (int) $request->partner_offer_tenor;
                 $application->save();
             }
 
@@ -427,13 +471,15 @@ class BNPLAdminController extends Controller
             // Notify user when admin sends offer or approves/rejects (in-app + email)
             $userId = $application->user_id;
             $status = $request->status;
-            if ($userId && in_array($status, ['approved', 'counter_offer', 'rejected'])) {
+            if ($userId && in_array($status, ['approved', 'counter_offer', 'partner_offer', 'rejected'])) {
                 $bnpl = MailBrand::BNPL_LABEL;
                 $message = $status === 'approved'
                     ? "Your {$bnpl} application has been approved. Please pay your initial down payment to complete the order."
                     : ($status === 'counter_offer'
                         ? "You have a counter offer on your {$bnpl} application. Please review and accept or decline."
-                        : "We cannot process your {$bnpl} application at this time. Thank you for choosing Troosolar.");
+                        : ($status === 'partner_offer'
+                            ? "You have a partner financing offer on your {$bnpl} application. Please review the terms."
+                            : "We cannot process your {$bnpl} application at this time. Thank you for choosing Troosolar."));
                 Notification::create([
                     'user_id' => $userId,
                     'message' => $message,
@@ -444,7 +490,7 @@ class BNPLAdminController extends Controller
                 $user = $application->user;
                 if ($user && !empty($user->email)) {
                     try {
-                        Mail::to($user->email)->send(new BNPLStatusEmail($user, $application, $status));
+                        Mail::to($user->email)->send(new BNPLStatusEmail($user, $application->fresh(), $status));
                     } catch (\Throwable $e) {
                         Log::warning('BNPL status email failed: ' . $e->getMessage(), [
                             'application_id' => $application->id,

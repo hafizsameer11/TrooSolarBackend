@@ -475,7 +475,7 @@ Route::post('bundles/{bundle}/update', [BundleController::class, 'update'])
         Route::get('/applications/{id}', [BNPLAdminController::class, 'show']);
         Route::put('/applications/{id}', [BNPLAdminController::class, 'updateApplication']);
         Route::put('/applications/{id}/offer', [BNPLAdminController::class, 'updateLoanOffer']);
-        Route::put('/applications/{id}/status', [BNPLAdminController::class, 'updateStatus']);
+        Route::match(['put', 'post'], '/applications/{id}/status', [BNPLAdminController::class, 'updateStatus']);
         Route::get('/guarantors', [BNPLAdminController::class, 'getGuarantors']);
         Route::put('/guarantors/{id}/status', [BNPLAdminController::class, 'updateGuarantorStatus']);
         Route::get('/guarantor-forms', [BNPLAdminController::class, 'guarantorFormStatus']);
