@@ -26,11 +26,14 @@ class PartnerLoanApplicationEmailPresenter
     {
         $orderedItems = $this->resolveOrderedItemsFromSnapshot();
         $isManualCredit = $this->isManualCreditCheck();
-        $loanSummary = $this->buildLoanSummary();
+        $isPartnerFinancing = $this->isPartnerFinancingPath();
+        $loanSummary = $this->buildLoanSummary($isPartnerFinancing);
 
         return [
             'is_bnpl' => $this->hasLoanPlanSnapshot(),
+            'is_partner_financing' => $isPartnerFinancing,
             'is_manual_credit_check' => $isManualCredit,
+            'hide_item_prices' => $isPartnerFinancing,
             'application' => [
                 'id' => $this->application->id,
                 'status' => $this->application->status,
@@ -44,16 +47,27 @@ class PartnerLoanApplicationEmailPresenter
                 'product_category' => $this->formatSlug($this->application->product_category),
                 'audit_type' => $this->application->audit_type,
                 'prior_application_id' => $this->application->prior_application_id,
+                'financing_path' => $isPartnerFinancing ? 'Partner Financing' : 'Troosolar Financing',
+                'property_status' => $this->formatSlug(
+                    $this->application->property_status
+                        ?? (is_array($this->application->loan_plan_snapshot)
+                            ? ($this->application->loan_plan_snapshot['property_status'] ?? null)
+                            : null)
+                ),
             ],
             'ordered_items' => $orderedItems,
             'customer' => $this->buildCustomerBlock(),
+            'next_of_kin' => $this->buildNextOfKinBlock(),
+            'employment' => $this->buildEmploymentBlock(),
+            'business' => $this->buildBusinessBlock(),
             'property' => $this->buildPropertyBlock(),
             'loan_summary' => $loanSummary,
-            'show_mono_section' => ! $isManualCredit && $this->application->mono !== null,
-            'mono_summary' => $isManualCredit ? [] : $this->buildMonoSummary(),
-            'credit_check' => $this->buildCreditCheckBlock(),
+            // Partner path never uses Mono credit check — hide Mono calculation entirely.
+            'show_mono_section' => ! $isPartnerFinancing && ! $isManualCredit && $this->application->mono !== null,
+            'mono_summary' => ($isPartnerFinancing || $isManualCredit) ? [] : $this->buildMonoSummary(),
+            'credit_check' => $this->buildCreditCheckBlock($isPartnerFinancing),
             'beneficiary' => $this->buildBeneficiaryBlock(),
-            'kyc_attachments' => $this->buildKycAttachments(),
+            'kyc_attachments' => $this->buildKycAttachments($isPartnerFinancing),
             'guarantor' => $this->buildGuarantorBlock(),
             'admin' => [
                 'notes' => $this->application->admin_notes,
@@ -61,6 +75,23 @@ class PartnerLoanApplicationEmailPresenter
                 'counter_offer_min_tenor' => $this->application->counter_offer_min_tenor,
             ],
         ];
+    }
+
+    public function isPartnerFinancingPath(): bool
+    {
+        $path = strtolower((string) ($this->application->financing_path ?? ''));
+        if ($path === 'partner') {
+            return true;
+        }
+        $snap = $this->application->loan_plan_snapshot;
+        if (is_array($snap)) {
+            $snapPath = strtolower((string) data_get($snap, 'financing.path', ''));
+            if ($snapPath === 'partner') {
+                return true;
+            }
+        }
+
+        return strtolower((string) ($this->application->credit_check_method ?? '')) === 'partner';
     }
 
     public function isManualCreditCheck(): bool
@@ -154,9 +185,9 @@ class PartnerLoanApplicationEmailPresenter
     }
 
     /**
-     * @return array{rows: array<int, array<string, mixed>>, tenor: int, tenor_label: string}|null
+     * @return array{rows: array<int, array<string, mixed>>, tenor: int, tenor_label: string, tenor_num: int, title: string}|null
      */
-    public function buildLoanSummary(): ?array
+    public function buildLoanSummary(bool $isPartnerFinancing = false): ?array
     {
         $snap = $this->application->loan_plan_snapshot;
         if (! is_array($snap) || $snap === []) {
@@ -165,6 +196,79 @@ class PartnerLoanApplicationEmailPresenter
 
         $loanCalc = $this->application->mono;
         $loanApp = $this->application;
+
+        $tenor = (int) (
+            $snap['tenor']
+            ?? $loanApp->repayment_duration
+            ?? $loanCalc?->repayment_duration
+            ?? 12
+        );
+        if ($tenor <= 0) {
+            $tenor = 12;
+        }
+
+        // Partner path: same simple calculator the customer sees (Total / Initial Deposit / Loan Amount + Tenor).
+        if ($isPartnerFinancing) {
+            $totalAmount = $this->pickNum(
+                $snap['totalAmount'] ?? null,
+                $snap['grandTotal'] ?? null,
+                $snap['invoiceGrandTotal'] ?? null,
+                $loanCalc?->total_amount
+            );
+            $initialDeposit = $this->pickNum(
+                $snap['baseDepositAmount'] ?? null,
+                $snap['depositAmount'] ?? null,
+                $loanCalc?->down_payment
+            );
+            $totalLoanAmount = $this->pickNum(
+                $snap['totalLoanAmount'] ?? null,
+                $snap['principal'] ?? null,
+                $loanCalc?->principal_amount ?? null
+            );
+            if ($totalLoanAmount <= 0) {
+                $totalLoanAmount = max($totalAmount - $initialDeposit, 0);
+            }
+            $depositPercent = $this->pickNum($snap['depositPercent'] ?? null);
+            if ($depositPercent <= 0 && $totalAmount > 0 && $initialDeposit > 0) {
+                $depositPercent = (int) round(($initialDeposit / $totalAmount) * 100);
+            }
+            $depositLabelPct = $depositPercent > 0 ? ((int) $depositPercent).'%' : '—';
+
+            return [
+                'title' => 'Financing summary',
+                'rows' => [
+                    [
+                        'num' => 1,
+                        'label' => 'Total Amount',
+                        'value' => $totalAmount,
+                        'value_formatted' => $this->formatNaira($totalAmount),
+                        'bold' => false,
+                        'accent' => null,
+                    ],
+                    [
+                        'num' => 2,
+                        'label' => $depositLabelPct !== '—'
+                            ? 'Initial Deposit ('.$depositLabelPct.')'
+                            : 'Initial Deposit',
+                        'value' => $initialDeposit,
+                        'value_formatted' => $this->formatNaira($initialDeposit),
+                        'bold' => false,
+                        'accent' => 'red',
+                    ],
+                    [
+                        'num' => 3,
+                        'label' => 'Total Loan Amount',
+                        'value' => $totalLoanAmount,
+                        'value_formatted' => $this->formatNaira($totalLoanAmount),
+                        'bold' => true,
+                        'accent' => null,
+                    ],
+                ],
+                'tenor' => $tenor,
+                'tenor_label' => $tenor === 1 ? '1 month' : $tenor.' months',
+                'tenor_num' => 4,
+            ];
+        }
 
         $statusLower = strtolower((string) ($loanApp->status ?? ''));
         $isCounterOfferAccepted = $statusLower === 'counter_offer_accepted';
@@ -241,15 +345,8 @@ class PartnerLoanApplicationEmailPresenter
                 : self::DEFAULT_INTEREST_RATE
         );
 
-        $tenor = (int) (
-            ($isCounterOfferAccepted && $acceptedMinTenor > 0 ? $acceptedMinTenor : null)
-            ?? $snap['tenor']
-            ?? $loanApp->repayment_duration
-            ?? $loanCalc?->repayment_duration
-            ?? 12
-        );
-        if ($tenor <= 0) {
-            $tenor = 12;
+        if ($isCounterOfferAccepted && $acceptedMinTenor > 0) {
+            $tenor = $acceptedMinTenor;
         }
 
         $totalInterestFromApi = $this->pickNum(
@@ -332,9 +429,11 @@ class PartnerLoanApplicationEmailPresenter
         ];
 
         return [
+            'title' => 'Loan summary',
             'rows' => $rows,
             'tenor' => $tenor,
             'tenor_label' => $tenor === 1 ? '1 month' : $tenor.' months',
+            'tenor_num' => 6,
         ];
     }
 
@@ -356,6 +455,16 @@ class PartnerLoanApplicationEmailPresenter
             'bvn' => $snapP['bvn'] ?? $this->application->bvn ?? $this->user->bvn ?? null,
             'social_media' => $snapP['social_media']
                 ?? ($this->application->social_media_handle ? trim((string) $this->application->social_media_handle) : null),
+            'bank_account_no' => $snapP['bank_account_no'] ?? null,
+            'bank_name' => $snapP['bank_name'] ?? null,
+            'gender' => $this->formatSlug($snapP['gender'] ?? null),
+            'date_of_birth' => $snapP['date_of_birth'] ?? null,
+            'marital_status' => $this->formatSlug($snapP['marital_status'] ?? null),
+            'occupation' => $snapP['occupation'] ?? null,
+            'monthly_income' => $snapP['monthly_income'] ?? null,
+            'id_type' => $this->formatSlug($snapP['id_type'] ?? null),
+            'id_expiry_date' => $snapP['id_expiry_date'] ?? null,
+            'id_no' => $snapP['id_no'] ?? null,
             'from_snapshot' => $snapP['full_name'] !== null || $snapP['email'] !== null,
         ];
     }
@@ -373,6 +482,16 @@ class PartnerLoanApplicationEmailPresenter
                 'phone' => null,
                 'email' => null,
                 'social_media' => null,
+                'bank_account_no' => null,
+                'bank_name' => null,
+                'gender' => null,
+                'date_of_birth' => null,
+                'marital_status' => null,
+                'occupation' => null,
+                'monthly_income' => null,
+                'id_type' => null,
+                'id_expiry_date' => null,
+                'id_no' => null,
             ];
         }
 
@@ -385,7 +504,95 @@ class PartnerLoanApplicationEmailPresenter
             'phone' => $s($p['phone'] ?? null),
             'email' => $s($p['email'] ?? null),
             'social_media' => $s($p['social_media'] ?? null),
+            'bank_account_no' => $s($p['bank_account_no'] ?? null),
+            'bank_name' => $s($p['bank_name'] ?? null),
+            'gender' => $s($p['gender'] ?? null),
+            'date_of_birth' => $s($p['date_of_birth'] ?? null),
+            'marital_status' => $s($p['marital_status'] ?? null),
+            'occupation' => $s($p['occupation'] ?? null),
+            'monthly_income' => $s($p['monthly_income'] ?? null),
+            'id_type' => $s($p['id_type'] ?? null),
+            'id_expiry_date' => $s($p['id_expiry_date'] ?? null),
+            'id_no' => $s($p['id_no'] ?? null),
         ];
+    }
+
+    /**
+     * @return array<string, string|null>|null
+     */
+    private function buildNextOfKinBlock(): ?array
+    {
+        $snap = $this->application->loan_plan_snapshot;
+        if (! is_array($snap) || empty($snap['final_application_next_of_kin']) || ! is_array($snap['final_application_next_of_kin'])) {
+            return null;
+        }
+        $n = $snap['final_application_next_of_kin'];
+        $s = fn ($v) => ($v !== null && trim((string) $v) !== '') ? trim((string) $v) : null;
+        $block = [
+            'name' => $s($n['name'] ?? null),
+            'phone' => $s($n['phone'] ?? null),
+            'address' => $s($n['address'] ?? null),
+        ];
+        if ($block['name'] === null && $block['phone'] === null && $block['address'] === null) {
+            return null;
+        }
+
+        return $block;
+    }
+
+    /**
+     * @return array<string, string|null>|null
+     */
+    private function buildEmploymentBlock(): ?array
+    {
+        $snap = $this->application->loan_plan_snapshot;
+        if (! is_array($snap) || empty($snap['final_application_employment']) || ! is_array($snap['final_application_employment'])) {
+            return null;
+        }
+        $e = $snap['final_application_employment'];
+        $s = fn ($v) => ($v !== null && trim((string) $v) !== '') ? trim((string) $v) : null;
+        $block = [
+            'company_name' => $s($e['company_name'] ?? null),
+            'company_address' => $s($e['company_address'] ?? null),
+            'employment_duration' => $s($e['employment_duration'] ?? null),
+            'staff_id_no' => $s($e['staff_id_no'] ?? null),
+        ];
+        if (count(array_filter($block)) === 0) {
+            return null;
+        }
+
+        return $block;
+    }
+
+    /**
+     * @return array<string, string|null>|null
+     */
+    private function buildBusinessBlock(): ?array
+    {
+        $snap = $this->application->loan_plan_snapshot;
+        if (! is_array($snap) || empty($snap['final_application_business']) || ! is_array($snap['final_application_business'])) {
+            return null;
+        }
+        $b = $snap['final_application_business'];
+        $s = fn ($v) => ($v !== null && trim((string) $v) !== '') ? trim((string) $v) : null;
+        $block = [
+            'business_name' => $s($b['business_name'] ?? null),
+            'business_address' => $s($b['business_address'] ?? null),
+            'business_rc_bn' => $s($b['business_rc_bn'] ?? null),
+            'business_bank_account_no' => $s($b['business_bank_account_no'] ?? null),
+            'business_bank_name' => $s($b['business_bank_name'] ?? null),
+            'annual_turnover' => $s($b['annual_turnover'] ?? null),
+            'avg_monthly_turnover' => $s($b['avg_monthly_turnover'] ?? null),
+            'date_of_incorporation' => $s($b['date_of_incorporation'] ?? null),
+            'business_ownership' => $s($b['business_ownership'] ?? null),
+            'official_email' => $s($b['official_email'] ?? null),
+            'nature_of_business' => $s($b['nature_of_business'] ?? null),
+        ];
+        if (count(array_filter($block)) === 0) {
+            return null;
+        }
+
+        return $block;
     }
 
     /**
@@ -402,6 +609,7 @@ class PartnerLoanApplicationEmailPresenter
             'landmark' => $currentPowerSources,
             'floors' => $this->application->property_floors,
             'rooms' => $this->application->property_rooms,
+            'property_status' => $this->formatSlug($this->application->property_status),
             'is_gated_estate' => (bool) $this->application->is_gated_estate,
             'estate_name' => $this->application->estate_name,
             'estate_address' => $this->application->estate_address,
@@ -456,14 +664,15 @@ class PartnerLoanApplicationEmailPresenter
     /**
      * @return array<string, string|null>
      */
-    private function buildCreditCheckBlock(): array
+    private function buildCreditCheckBlock(bool $isPartnerFinancing = false): array
     {
         $method = $this->application->credit_check_method;
 
         return [
-            'method' => $method ? ucfirst(str_replace('_', ' ', (string) $method)) : null,
+            'method' => $method ? ucfirst(str_replace('_', ' ', (string) $method)) : ($isPartnerFinancing ? 'Partner' : null),
             'bvn' => $this->application->bvn,
-            'mono_credit_status' => $this->application->mono_credit_status,
+            // Hide Mono status on partner-path emails.
+            'mono_credit_status' => $isPartnerFinancing ? null : $this->application->mono_credit_status,
         ];
     }
 
@@ -483,11 +692,17 @@ class PartnerLoanApplicationEmailPresenter
     /**
      * @return array<int, array{label: string, attached: bool}>
      */
-    private function buildKycAttachments(): array
+    private function buildKycAttachments(bool $isPartnerFinancing = false): array
     {
         $candidates = [
-            ['label' => 'Bank statement', 'path' => $this->application->bank_statement_path],
-            ['label' => 'Live selfie / photo', 'path' => $this->application->live_photo_path],
+            [
+                'label' => $isPartnerFinancing ? 'Bank statement' : 'Bank statement',
+                'path' => $this->application->bank_statement_path,
+            ],
+            [
+                'label' => $isPartnerFinancing ? 'Live selfie / passport photograph' : 'Live selfie / photo',
+                'path' => $this->application->live_photo_path,
+            ],
             ['label' => 'Title document (KYC)', 'path' => $this->application->title_document],
             ['label' => 'Upload document (KYC)', 'path' => $this->application->upload_document],
         ];

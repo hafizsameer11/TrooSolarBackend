@@ -63,6 +63,11 @@
     $admin = $d['admin'] ?? [];
     $showMono = !empty($d['show_mono_section']);
     $monoSummary = $d['mono_summary'] ?? [];
+    $isPartnerFinancing = !empty($d['is_partner_financing']);
+    $hideItemPrices = !empty($d['hide_item_prices']) || $isPartnerFinancing;
+    $nextOfKin = $d['next_of_kin'] ?? null;
+    $employment = $d['employment'] ?? null;
+    $business = $d['business'] ?? null;
     $currentPowerSources = $property['current_power_sources'] ?? $property['landmark'] ?? null;
 @endphp
 
@@ -98,6 +103,12 @@
                 <div class="detail-row">
                     <div class="detail-label">Application date</div>
                     <div class="detail-value">{{ $app['created_at'] }}</div>
+                </div>
+                @endif
+                @if(!empty($app['financing_path']))
+                <div class="detail-row">
+                    <div class="detail-label">Financing path</div>
+                    <div class="detail-value">{{ $app['financing_path'] }}</div>
                 </div>
                 @endif
                 @if(!empty($app['loan_amount_formatted']) && empty($loanSummary))
@@ -175,13 +186,174 @@
                     <div class="detail-value">{{ $customer['social_media'] }}</div>
                 </div>
                 @endif
+                @if(!empty($customer['bank_account_no']))
+                <div class="detail-row">
+                    <div class="detail-label">Bank account no</div>
+                    <div class="detail-value">{{ $customer['bank_account_no'] }}</div>
+                </div>
+                @endif
+                @if(!empty($customer['bank_name']))
+                <div class="detail-row">
+                    <div class="detail-label">Bank name</div>
+                    <div class="detail-value">{{ $customer['bank_name'] }}</div>
+                </div>
+                @endif
+                @if(!empty($customer['gender']))
+                <div class="detail-row">
+                    <div class="detail-label">Gender</div>
+                    <div class="detail-value">{{ $customer['gender'] }}</div>
+                </div>
+                @endif
+                @if(!empty($customer['date_of_birth']))
+                <div class="detail-row">
+                    <div class="detail-label">Date of birth</div>
+                    <div class="detail-value">{{ $customer['date_of_birth'] }}</div>
+                </div>
+                @endif
+                @if(!empty($customer['marital_status']))
+                <div class="detail-row">
+                    <div class="detail-label">Marital status</div>
+                    <div class="detail-value">{{ $customer['marital_status'] }}</div>
+                </div>
+                @endif
+                @if(!empty($customer['occupation']))
+                <div class="detail-row">
+                    <div class="detail-label">Occupation</div>
+                    <div class="detail-value">{{ $customer['occupation'] }}</div>
+                </div>
+                @endif
+                @if(!empty($customer['monthly_income']))
+                <div class="detail-row">
+                    <div class="detail-label">Monthly income</div>
+                    <div class="detail-value">{{ $customer['monthly_income'] }}</div>
+                </div>
+                @endif
+                @if(!empty($customer['id_type']))
+                <div class="detail-row">
+                    <div class="detail-label">ID type</div>
+                    <div class="detail-value">{{ $customer['id_type'] }}</div>
+                </div>
+                @endif
+                @if(!empty($customer['id_no']))
+                <div class="detail-row">
+                    <div class="detail-label">ID number</div>
+                    <div class="detail-value">{{ $customer['id_no'] }}</div>
+                </div>
+                @endif
+                @if(!empty($customer['id_expiry_date']))
+                <div class="detail-row">
+                    <div class="detail-label">ID expiry</div>
+                    <div class="detail-value">{{ $customer['id_expiry_date'] }}</div>
+                </div>
+                @endif
             </div>
         </div>
 
-        {{-- Ordered items table --}}
+        @if(!empty($nextOfKin))
+        <div class="section section-white">
+            <h2>{{ \App\Support\MailBrand::heading('Next of kin') }}</h2>
+            <div class="detail-table">
+                @if(!empty($nextOfKin['name']))
+                <div class="detail-row">
+                    <div class="detail-label">Name</div>
+                    <div class="detail-value">{{ $nextOfKin['name'] }}</div>
+                </div>
+                @endif
+                @if(!empty($nextOfKin['phone']))
+                <div class="detail-row">
+                    <div class="detail-label">Phone</div>
+                    <div class="detail-value">{{ $nextOfKin['phone'] }}</div>
+                </div>
+                @endif
+                @if(!empty($nextOfKin['address']))
+                <div class="detail-row">
+                    <div class="detail-label">Address</div>
+                    <div class="detail-value">{{ $nextOfKin['address'] }}</div>
+                </div>
+                @endif
+            </div>
+        </div>
+        @endif
+
+        @if(!empty($employment))
+        <div class="section section-white">
+            <h2>{{ \App\Support\MailBrand::heading('Employment details') }}</h2>
+            <div class="detail-table">
+                @if(!empty($employment['company_name']))
+                <div class="detail-row">
+                    <div class="detail-label">Company name</div>
+                    <div class="detail-value">{{ $employment['company_name'] }}</div>
+                </div>
+                @endif
+                @if(!empty($employment['company_address']))
+                <div class="detail-row">
+                    <div class="detail-label">Company address</div>
+                    <div class="detail-value">{{ $employment['company_address'] }}</div>
+                </div>
+                @endif
+                @if(!empty($employment['employment_duration']))
+                <div class="detail-row">
+                    <div class="detail-label">Employment duration</div>
+                    <div class="detail-value">{{ $employment['employment_duration'] }}</div>
+                </div>
+                @endif
+                @if(!empty($employment['staff_id_no']))
+                <div class="detail-row">
+                    <div class="detail-label">Staff ID</div>
+                    <div class="detail-value">{{ $employment['staff_id_no'] }}</div>
+                </div>
+                @endif
+            </div>
+        </div>
+        @endif
+
+        @if(!empty($business))
+        <div class="section section-white">
+            <h2>{{ \App\Support\MailBrand::heading('Business details') }}</h2>
+            <div class="detail-table">
+                @foreach([
+                    'business_name' => 'Business name',
+                    'business_address' => 'Business address',
+                    'business_rc_bn' => 'RC / BN',
+                    'business_bank_account_no' => 'Business bank account',
+                    'business_bank_name' => 'Business bank name',
+                    'annual_turnover' => 'Annual turnover',
+                    'avg_monthly_turnover' => 'Avg monthly turnover',
+                    'date_of_incorporation' => 'Date of incorporation',
+                    'business_ownership' => 'Business ownership',
+                    'official_email' => 'Official email',
+                    'nature_of_business' => 'Nature of business',
+                ] as $bizKey => $bizLabel)
+                    @if(!empty($business[$bizKey]))
+                    <div class="detail-row">
+                        <div class="detail-label">{{ $bizLabel }}</div>
+                        <div class="detail-value">{{ $business[$bizKey] }}</div>
+                    </div>
+                    @endif
+                @endforeach
+            </div>
+        </div>
+        @endif
+
+        {{-- Ordered items — partner path: names only (VAT-inclusive calculator prices would contradict) --}}
         @if(count($ordered['lines'] ?? []) > 0)
         <div class="section section-white">
             <h2>{{ \App\Support\MailBrand::heading('Product / bundle ordered') }}</h2>
+            @if($hideItemPrices)
+            <div class="detail-table">
+                @foreach($ordered['lines'] as $line)
+                <div class="detail-row">
+                    <div class="detail-label">{{ $line['kind_label'] ?? 'Item' }}</div>
+                    <div class="detail-value">
+                        {{ $line['title'] }}
+                        @if(!empty($line['quantity']) && (int) $line['quantity'] > 1)
+                            (×{{ $line['quantity'] }})
+                        @endif
+                    </div>
+                </div>
+                @endforeach
+            </div>
+            @else
             <table class="items-table">
                 <thead>
                     <tr>
@@ -204,6 +376,7 @@
                     @endforeach
                 </tbody>
             </table>
+            @endif
         </div>
         @endif
 
@@ -219,6 +392,12 @@
                     <span class="property-label">Address:</span>
                     {{ $property['address'] ?? '—' }}
                 </p>
+                @if(!empty($property['property_status']))
+                <p class="property-line">
+                    <span class="property-label">Property status:</span>
+                    {{ $property['property_status'] }}
+                </p>
+                @endif
                 <p class="property-line">
                     <span class="property-label">Current Power Sources:</span>
                     {{ $currentPowerSources ?? '—' }}
@@ -248,10 +427,10 @@
             </div>
         </div>
 
-        {{-- Loan summary (matches admin BNPL view) --}}
+        {{-- Loan / financing summary --}}
         @if(!empty($loanSummary))
         <div class="section section-green">
-            <h2 style="margin-bottom:16px;">{{ \App\Support\MailBrand::heading('Loan summary') }}</h2>
+            <h2 style="margin-bottom:16px;">{{ \App\Support\MailBrand::heading($loanSummary['title'] ?? 'Loan summary') }}</h2>
             @foreach($loanSummary['rows'] as $row)
             <div class="summary-card">
                 <table>
@@ -259,8 +438,9 @@
                         <td class="summary-label {{ !empty($row['bold']) ? 'bold' : '' }}">
                             {{ $row['num'] }}. {{ $row['label'] }}
                         </td>
-                        <td class="summary-value {{ !empty($row['bold']) ? 'bold' : '' }} {{ $row['num'] === 5 ? 'highlight' : '' }}">
-                            {{ $row['value_formatted'] }}
+                        <td class="summary-value {{ !empty($row['bold']) ? 'bold' : '' }} {{ ($row['num'] ?? 0) === 5 ? 'highlight' : '' }}"
+                            @if(($row['accent'] ?? null) === 'red') style="color:#dc2626;" @endif>
+                            @if(($row['accent'] ?? null) === 'red')−@endif{{ $row['value_formatted'] }}
                         </td>
                     </tr>
                 </table>
@@ -269,7 +449,7 @@
             <div class="summary-card" style="margin-bottom:0;">
                 <table>
                     <tr>
-                        <td class="summary-label">6. Loan Tenor</td>
+                        <td class="summary-label">{{ $loanSummary['tenor_num'] ?? 6 }}. Loan Tenor</td>
                         <td class="summary-value highlight">{{ $loanSummary['tenor_label'] }}</td>
                     </tr>
                 </table>
@@ -277,7 +457,7 @@
         </div>
         @endif
 
-        {{-- Credit check --}}
+        {{-- Credit check — partner path: method only, no Mono calculation --}}
         <div class="section section-white">
             <h2>{{ \App\Support\MailBrand::heading('Credit check & identity') }}</h2>
             <div class="detail-table">
@@ -305,6 +485,7 @@
             </div>
             @endif
 
+            @if(!$isPartnerFinancing)
             <h3>{{ \App\Support\MailBrand::heading('Linked bank account') }}</h3>
             @if($linkAccount)
             <div class="detail-table">
@@ -323,6 +504,7 @@
             </div>
             @else
             <p class="muted">No linked account on file.</p>
+            @endif
             @endif
         </div>
 
