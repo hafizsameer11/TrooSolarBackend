@@ -749,6 +749,7 @@ class BNPLController extends Controller
                     'loan_amount' => number_format((float) $application->loan_amount, 2),
                     'repayment_duration' => $application->repayment_duration,
                     'status' => $application->status, // pending, approved, rejected, counter_offer
+                    'financing_path' => $application->financing_path ?: 'troosolar',
                     'property_state' => $application->property_state,
                     'property_address' => $application->property_address,
                     'is_gated_estate' => $application->is_gated_estate,
@@ -864,6 +865,8 @@ class BNPLController extends Controller
                 'loan_amount' => number_format((float) $application->loan_amount, 2),
                 'repayment_duration' => $application->repayment_duration,
                 'status' => $application->status, // pending, approved, rejected, counter_offer, counter_offer_accepted
+                'financing_path' => $application->financing_path ?: 'troosolar',
+                'financing_partner_id' => $application->financing_partner_id,
                 'admin_notes' => $application->admin_notes,
                 'counter_offer_min_deposit' => $application->counter_offer_min_deposit !== null ? (float) $application->counter_offer_min_deposit : null,
                 'counter_offer_min_tenor' => $application->counter_offer_min_tenor,
