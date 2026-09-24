@@ -47,6 +47,8 @@ class BnplCreditCheckMethodCopy
             'partner' => [
                 'fee_title' => 'Credit Check Fee',
                 'fee_intro' => "Pay the credit check fee to send your application to your selected financing partner. We'll get back to you within 2 - 5 working days.",
+                'fee_note' => 'Pay the verification fee before we run your credit check. Prefer card or bank transfer? Use the payment option below.',
+                'terms_label' => 'I accept the terms and conditions for the credit check fee payment.',
                 'success_message' => 'We have received your application for partner financing. We will get back to you within 2 - 5 working days.',
                 'routed_note' => "Your application was routed to a financing partner. Troosolar's internal guarantor flow does not continue for this path.",
             ],
@@ -67,6 +69,8 @@ class BnplCreditCheckMethodCopy
             'partner' => [
                 'fee_title' => self::textOrDefault($settings->credit_check_partner_fee_title ?? null, $defaults['partner']['fee_title']),
                 'fee_intro' => self::textOrDefault($settings->credit_check_partner_fee_intro ?? null, $defaults['partner']['fee_intro']),
+                'fee_note' => self::textOrDefault($settings->credit_check_partner_fee_note ?? null, $defaults['partner']['fee_note']),
+                'terms_label' => self::textOrDefault($settings->credit_check_partner_terms_label ?? null, $defaults['partner']['terms_label']),
                 'success_message' => self::textOrDefault($settings->credit_check_partner_success_message ?? null, $defaults['partner']['success_message']),
                 'routed_note' => self::textOrDefault($settings->credit_check_partner_routed_note ?? null, $defaults['partner']['routed_note']),
             ],

@@ -78,6 +78,8 @@ class BnplSettings extends Model
         'credit_check_sme_manual_submit_label',
         'credit_check_partner_fee_title',
         'credit_check_partner_fee_intro',
+        'credit_check_partner_fee_note',
+        'credit_check_partner_terms_label',
         'credit_check_partner_success_message',
         'credit_check_partner_routed_note',
     ];
