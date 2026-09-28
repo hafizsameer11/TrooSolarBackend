@@ -1348,13 +1348,52 @@ class BNPLController extends Controller
             }
 
             $status = $application->status;
-            if (!in_array($status, ['approved', 'counter_offer_accepted'], true)) {
-                return ResponseHelper::error('Application must be approved or counter offer accepted before paying down payment', 422);
+            if (!in_array($status, ['approved', 'counter_offer_accepted', 'partner_offer'], true)) {
+                return ResponseHelper::error('Application must be approved, counter offer accepted, or have a partner offer before paying down payment', 422);
             }
 
             $mono = $application->mono;
             if (!$mono) {
                 return ResponseHelper::error('Loan calculation not found for this application', 404);
+            }
+
+            // Partner offer: sync mono amounts from the editable partner terms before charging.
+            if ($status === 'partner_offer') {
+                $partnerDeposit = (float) ($application->partner_offer_initial_deposit ?? 0);
+                $partnerFees = (float) ($application->partner_offer_admin_fees ?? 0);
+                $partnerUpfront = max($partnerDeposit + $partnerFees, 0);
+                $partnerLoan = (float) ($application->partner_offer_loan_amount ?? 0);
+                $partnerRepay = (float) ($application->partner_offer_repayment_amount ?? 0);
+                $partnerTenor = (int) ($application->partner_offer_tenor ?? 0);
+                $partnerRate = (float) ($application->partner_offer_interest_rate ?? 0);
+
+                if ($partnerUpfront <= 0) {
+                    return ResponseHelper::error('Partner offer is missing a valid initial deposit / admin fees amount', 422);
+                }
+
+                $mono->down_payment = $partnerUpfront;
+                if ($partnerLoan > 0) {
+                    $mono->loan_amount = $partnerLoan;
+                }
+                if ($partnerTenor > 0) {
+                    $mono->repayment_duration = $partnerTenor;
+                }
+                if ($partnerRate > 0) {
+                    $mono->interest_rate = $partnerRate;
+                }
+                // total_amount = repayment + upfront (remaining wallet balance = repayment)
+                $mono->total_amount = $partnerRepay > 0
+                    ? round($partnerRepay + $partnerUpfront, 2)
+                    : round($partnerLoan + $partnerUpfront, 2);
+                $mono->save();
+
+                if ($partnerTenor > 0) {
+                    $application->repayment_duration = $partnerTenor;
+                }
+                if ($partnerRepay > 0) {
+                    $application->loan_amount = $partnerRepay;
+                }
+                $application->save();
             }
 
             // Check if order already created for this application (idempotent)

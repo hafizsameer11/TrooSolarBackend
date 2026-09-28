@@ -417,6 +417,24 @@ class BNPLAdminController extends Controller
                 $application->loan_amount = (float) $request->partner_offer_repayment_amount;
                 $application->repayment_duration = (int) $request->partner_offer_tenor;
                 $application->save();
+
+                // Keep mono in sync so customer Pay Down Payment uses partner terms.
+                if ($application->mono) {
+                    $mono = $application->mono;
+                    $upfront = (float) $request->partner_offer_initial_deposit
+                        + (float) $request->input('partner_offer_admin_fees', 0);
+                    $loanAmt = (float) $request->partner_offer_loan_amount;
+                    $repayAmt = (float) $request->partner_offer_repayment_amount;
+                    $tenor = (int) $request->partner_offer_tenor;
+                    $rate = (float) $request->partner_offer_interest_rate;
+
+                    $mono->down_payment = $upfront;
+                    $mono->loan_amount = $loanAmt;
+                    $mono->repayment_duration = $tenor;
+                    $mono->interest_rate = $rate;
+                    $mono->total_amount = round($repayAmt + $upfront, 2);
+                    $mono->save();
+                }
             }
 
             // When approving, sync counter offer terms to mono if they exist
