@@ -870,15 +870,41 @@ class BNPLController extends Controller
                 'admin_notes' => $application->admin_notes,
                 'counter_offer_min_deposit' => $application->counter_offer_min_deposit !== null ? (float) $application->counter_offer_min_deposit : null,
                 'counter_offer_min_tenor' => $application->counter_offer_min_tenor,
-                'partner_offer' => [
-                    'interest_rate' => $application->partner_offer_interest_rate !== null ? (float) $application->partner_offer_interest_rate : null,
-                    'initial_deposit' => $application->partner_offer_initial_deposit !== null ? (float) $application->partner_offer_initial_deposit : null,
-                    'admin_fees' => $application->partner_offer_admin_fees !== null ? (float) $application->partner_offer_admin_fees : null,
-                    'repayment_amount' => $application->partner_offer_repayment_amount !== null ? (float) $application->partner_offer_repayment_amount : null,
-                    'loan_amount' => $application->partner_offer_loan_amount !== null ? (float) $application->partner_offer_loan_amount : null,
-                    'tenor' => $application->partner_offer_tenor !== null ? (int) $application->partner_offer_tenor : null,
-                    'documents' => is_array($application->partner_offer_documents) ? $application->partner_offer_documents : [],
-                ],
+                'partner_offer' => (function () use ($application) {
+                    $rate = $application->partner_offer_interest_rate !== null
+                        ? (float) $application->partner_offer_interest_rate
+                        : null;
+                    $loan = $application->partner_offer_loan_amount !== null
+                        ? (float) $application->partner_offer_loan_amount
+                        : null;
+                    $tenor = $application->partner_offer_tenor !== null
+                        ? (int) $application->partner_offer_tenor
+                        : null;
+                    $storedRepay = $application->partner_offer_repayment_amount !== null
+                        ? (float) $application->partner_offer_repayment_amount
+                        : null;
+                    $repay = $storedRepay;
+                    if ($loan !== null && $rate !== null && $tenor !== null && $loan > 0 && $tenor > 0) {
+                        $interest = round($loan * ($rate / 100) * $tenor, 2);
+                        $repay = round($loan + $interest, 2);
+                    }
+
+                    return [
+                        'interest_rate' => $rate,
+                        'initial_deposit' => $application->partner_offer_initial_deposit !== null
+                            ? (float) $application->partner_offer_initial_deposit
+                            : null,
+                        'admin_fees' => $application->partner_offer_admin_fees !== null
+                            ? (float) $application->partner_offer_admin_fees
+                            : null,
+                        'repayment_amount' => $repay,
+                        'loan_amount' => $loan,
+                        'tenor' => $tenor,
+                        'documents' => is_array($application->partner_offer_documents)
+                            ? $application->partner_offer_documents
+                            : [],
+                    ];
+                })(),
                 'property_state' => $application->property_state,
                 'property_address' => $application->property_address,
                 'property_landmark' => $application->property_landmark,
@@ -1363,9 +1389,14 @@ class BNPLController extends Controller
                 $partnerFees = (float) ($application->partner_offer_admin_fees ?? 0);
                 $partnerUpfront = max($partnerDeposit + $partnerFees, 0);
                 $partnerLoan = (float) ($application->partner_offer_loan_amount ?? 0);
-                $partnerRepay = (float) ($application->partner_offer_repayment_amount ?? 0);
                 $partnerTenor = (int) ($application->partner_offer_tenor ?? 0);
                 $partnerRate = (float) ($application->partner_offer_interest_rate ?? 0);
+                // Recalculate repayment from loan × rate% × tenor (same as Loan Summary).
+                $partnerInterest = round($partnerLoan * ($partnerRate / 100) * max($partnerTenor, 0), 2);
+                $partnerRepay = round($partnerLoan + $partnerInterest, 2);
+                if ($partnerRepay > 0) {
+                    $application->partner_offer_repayment_amount = $partnerRepay;
+                }
 
                 if ($partnerUpfront <= 0) {
                     return ResponseHelper::error('Partner offer is missing a valid initial deposit / admin fees amount', 422);

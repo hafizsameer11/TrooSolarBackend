@@ -384,12 +384,20 @@ class BNPLAdminController extends Controller
             }
 
             if ($request->status === 'partner_offer') {
-                $application->partner_offer_interest_rate = $request->partner_offer_interest_rate;
+                $rate = (float) $request->partner_offer_interest_rate;
+                $loanAmt = (float) $request->partner_offer_loan_amount;
+                $tenor = (int) $request->partner_offer_tenor;
+                // Always derive repayment from Loan Summary formula so rate/tenor edits stay consistent:
+                // interest = loan × (rate%/100) × tenor; repayment = loan + interest
+                $computedInterest = round($loanAmt * ($rate / 100) * max($tenor, 0), 2);
+                $repayAmt = round($loanAmt + $computedInterest, 2);
+
+                $application->partner_offer_interest_rate = $rate;
                 $application->partner_offer_initial_deposit = $request->partner_offer_initial_deposit;
                 $application->partner_offer_admin_fees = $request->input('partner_offer_admin_fees', 0);
-                $application->partner_offer_repayment_amount = $request->partner_offer_repayment_amount;
-                $application->partner_offer_loan_amount = $request->partner_offer_loan_amount;
-                $application->partner_offer_tenor = (int) $request->partner_offer_tenor;
+                $application->partner_offer_repayment_amount = $repayAmt;
+                $application->partner_offer_loan_amount = $loanAmt;
+                $application->partner_offer_tenor = $tenor;
 
                 $storedDocs = is_array($application->partner_offer_documents)
                     ? $application->partner_offer_documents
@@ -414,8 +422,8 @@ class BNPLAdminController extends Controller
                     }
                 }
                 $application->partner_offer_documents = $storedDocs;
-                $application->loan_amount = (float) $request->partner_offer_repayment_amount;
-                $application->repayment_duration = (int) $request->partner_offer_tenor;
+                $application->loan_amount = $repayAmt;
+                $application->repayment_duration = $tenor;
                 $application->save();
 
                 // Keep mono in sync so customer Pay Down Payment uses partner terms.
@@ -423,10 +431,6 @@ class BNPLAdminController extends Controller
                     $mono = $application->mono;
                     $upfront = (float) $request->partner_offer_initial_deposit
                         + (float) $request->input('partner_offer_admin_fees', 0);
-                    $loanAmt = (float) $request->partner_offer_loan_amount;
-                    $repayAmt = (float) $request->partner_offer_repayment_amount;
-                    $tenor = (int) $request->partner_offer_tenor;
-                    $rate = (float) $request->partner_offer_interest_rate;
 
                     $mono->down_payment = $upfront;
                     $mono->loan_amount = $loanAmt;
