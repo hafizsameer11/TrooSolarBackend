@@ -63,25 +63,54 @@ class BNPLStatusEmail extends Mailable
             $this->subjectLine = "Partner financing offer on your {$bnpl} application – Troosolar";
             $this->headingText = MailBrand::heading('Partner financing offer');
             $this->bodyText = "A financing partner has provided an offer for your {$bnpl} application. Please review the terms below and log in for more details. Supporting documents may be attached.";
+            $rate = $application->partner_offer_interest_rate !== null
+                ? (float) $application->partner_offer_interest_rate
+                : null;
+            $loan = $application->partner_offer_loan_amount !== null
+                ? (float) $application->partner_offer_loan_amount
+                : null;
+            $deposit = $application->partner_offer_initial_deposit !== null
+                ? (float) $application->partner_offer_initial_deposit
+                : null;
+            $tenor = $application->partner_offer_tenor !== null
+                ? (int) $application->partner_offer_tenor
+                : null;
+            $storedRepay = $application->partner_offer_repayment_amount !== null
+                ? (float) $application->partner_offer_repayment_amount
+                : null;
+            $repay = $storedRepay;
+            if ($loan !== null && $rate !== null && $tenor !== null && $loan > 0 && $tenor > 0) {
+                $interest = round($loan * ($rate / 100) * $tenor, 2);
+                $repay = round($loan + $interest, 2);
+            }
+
+            $depositPercent = null;
+            if (
+                \Illuminate\Support\Facades\Schema::hasColumn('loan_applications', 'partner_offer_deposit_percent')
+                && $application->partner_offer_deposit_percent !== null
+            ) {
+                $depositPercent = (float) $application->partner_offer_deposit_percent;
+            }
+            if (($depositPercent === null || $depositPercent <= 0) && $deposit !== null && $loan !== null && $deposit > 0 && $loan > 0) {
+                $depositPercent = round(($deposit / ($deposit + $loan)) * 100, 2);
+            }
+
+            $monthlyRepayment = null;
+            if ($repay !== null && $tenor !== null && $tenor > 0 && $repay > 0) {
+                $monthlyRepayment = round($repay / $tenor, 2);
+            }
+
             $this->partnerOffer = [
-                'interest_rate' => $application->partner_offer_interest_rate !== null
-                    ? (float) $application->partner_offer_interest_rate
-                    : null,
-                'initial_deposit' => $application->partner_offer_initial_deposit !== null
-                    ? (float) $application->partner_offer_initial_deposit
-                    : null,
+                'interest_rate' => $rate,
+                'deposit_percent' => $depositPercent,
+                'initial_deposit' => $deposit,
                 'admin_fees' => $application->partner_offer_admin_fees !== null
                     ? (float) $application->partner_offer_admin_fees
                     : null,
-                'repayment_amount' => $application->partner_offer_repayment_amount !== null
-                    ? (float) $application->partner_offer_repayment_amount
-                    : null,
-                'loan_amount' => $application->partner_offer_loan_amount !== null
-                    ? (float) $application->partner_offer_loan_amount
-                    : null,
-                'tenor' => $application->partner_offer_tenor !== null
-                    ? (int) $application->partner_offer_tenor
-                    : null,
+                'repayment_amount' => $repay,
+                'monthly_repayment' => $monthlyRepayment,
+                'loan_amount' => $loan,
+                'tenor' => $tenor,
                 'documents_count' => is_array($application->partner_offer_documents)
                     ? count($application->partner_offer_documents)
                     : 0,

@@ -63,7 +63,17 @@
                     <p><strong>Interest rate:</strong> {{ rtrim(rtrim(number_format($partnerOffer['interest_rate'], 4, '.', ''), '0'), '.') }}%</p>
                 @endif
                 @if($partnerOffer['initial_deposit'] !== null)
-                    <p><strong>Initial deposit:</strong> ₦{{ number_format($partnerOffer['initial_deposit'], 2) }}</p>
+                    @php
+                        $depositPct = $partnerOffer['deposit_percent'] ?? null;
+                        $depositPctLabel = null;
+                        if ($depositPct !== null && (float) $depositPct > 0) {
+                            $pct = (float) $depositPct;
+                            $depositPctLabel = abs($pct - round($pct)) < 0.05
+                                ? (string) round($pct)
+                                : rtrim(rtrim(number_format($pct, 2, '.', ''), '0'), '.');
+                        }
+                    @endphp
+                    <p><strong>Initial deposit{{ $depositPctLabel ? ' ('.$depositPctLabel.'%)' : '' }}:</strong> ₦{{ number_format($partnerOffer['initial_deposit'], 2) }}</p>
                 @endif
                 @if($partnerOffer['admin_fees'] !== null)
                     <p><strong>Admin fees:</strong> ₦{{ number_format($partnerOffer['admin_fees'], 2) }}</p>
@@ -73,6 +83,9 @@
                 @endif
                 @if($partnerOffer['repayment_amount'] !== null)
                     <p><strong>Repayment amount:</strong> ₦{{ number_format($partnerOffer['repayment_amount'], 2) }}</p>
+                @endif
+                @if($partnerOffer['monthly_repayment'] !== null)
+                    <p><strong>Monthly repayment amount:</strong> ₦{{ number_format($partnerOffer['monthly_repayment'], 2) }}</p>
                 @endif
                 @if(!empty($partnerOffer['tenor']))
                     <p><strong>Tenor:</strong> {{ $partnerOffer['tenor'] }} {{ $partnerOffer['tenor'] == 1 ? 'month' : 'months' }}</p>
