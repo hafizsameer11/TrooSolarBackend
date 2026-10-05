@@ -364,6 +364,7 @@ class BNPLAdminController extends Controller
                 'partner_offer_tenor' => 'required_if:status,partner_offer|integer|min:1|max:120',
                 'partner_offer_documents' => 'nullable|array',
                 'partner_offer_documents.*' => 'file|max:10240|mimes:pdf,jpg,jpeg,png,doc,docx',
+                'partner_offer_writeup' => 'nullable|string|max:2000',
                 'admin_notes' => 'nullable|string|max:1000',
             ]);
 
@@ -434,6 +435,13 @@ class BNPLAdminController extends Controller
                     }
                 }
                 $application->partner_offer_documents = $storedDocs;
+                if (
+                    \Illuminate\Support\Facades\Schema::hasColumn('loan_applications', 'partner_offer_writeup')
+                    && $request->has('partner_offer_writeup')
+                ) {
+                    $writeup = trim((string) $request->input('partner_offer_writeup', ''));
+                    $application->partner_offer_writeup = $writeup !== '' ? $writeup : null;
+                }
                 $application->loan_amount = $repayAmt;
                 $application->repayment_duration = $tenor;
                 $application->save();

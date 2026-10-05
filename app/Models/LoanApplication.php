@@ -60,6 +60,7 @@ class LoanApplication extends Model
     'partner_offer_loan_amount',
     'partner_offer_tenor',
     'partner_offer_documents',
+    'partner_offer_writeup',
         'order_items_snapshot',
         'loan_plan_snapshot',
         'installation_requested_date',

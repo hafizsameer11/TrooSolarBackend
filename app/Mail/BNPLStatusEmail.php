@@ -62,7 +62,12 @@ class BNPLStatusEmail extends Mailable
         } elseif ($status === 'partner_offer') {
             $this->subjectLine = "Partner financing offer on your {$bnpl} application – Troosolar";
             $this->headingText = MailBrand::heading('Partner financing offer');
-            $this->bodyText = "A financing partner has provided an offer for your {$bnpl} application. Please review the terms below and log in for more details. Supporting documents may be attached.";
+            $customWriteup = is_string($application->partner_offer_writeup ?? null)
+                ? trim($application->partner_offer_writeup)
+                : '';
+            $this->bodyText = $customWriteup !== ''
+                ? $customWriteup
+                : "A financing partner has provided an offer for your {$bnpl} application. Please review the terms below and log in for more details. Supporting documents may be attached.";
             $rate = $application->partner_offer_interest_rate !== null
                 ? (float) $application->partner_offer_interest_rate
                 : null;

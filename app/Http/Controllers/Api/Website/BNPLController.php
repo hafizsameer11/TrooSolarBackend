@@ -904,6 +904,15 @@ class BNPLController extends Controller
                         $depositPercent = round(($deposit / ($deposit + $loan)) * 100, 2);
                     }
 
+                    $writeup = null;
+                    if (
+                        \Illuminate\Support\Facades\Schema::hasColumn('loan_applications', 'partner_offer_writeup')
+                        && is_string($application->partner_offer_writeup)
+                        && trim($application->partner_offer_writeup) !== ''
+                    ) {
+                        $writeup = trim($application->partner_offer_writeup);
+                    }
+
                     return [
                         'interest_rate' => $rate,
                         'deposit_percent' => $depositPercent,
@@ -914,6 +923,7 @@ class BNPLController extends Controller
                         'repayment_amount' => $repay,
                         'loan_amount' => $loan,
                         'tenor' => $tenor,
+                        'writeup' => $writeup,
                         'documents' => is_array($application->partner_offer_documents)
                             ? $application->partner_offer_documents
                             : [],
