@@ -877,6 +877,9 @@ class BNPLController extends Controller
                     $loan = $application->partner_offer_loan_amount !== null
                         ? (float) $application->partner_offer_loan_amount
                         : null;
+                    $deposit = $application->partner_offer_initial_deposit !== null
+                        ? (float) $application->partner_offer_initial_deposit
+                        : null;
                     $tenor = $application->partner_offer_tenor !== null
                         ? (int) $application->partner_offer_tenor
                         : null;
@@ -889,11 +892,22 @@ class BNPLController extends Controller
                         $repay = round($loan + $interest, 2);
                     }
 
+                    // Prefer the % the partner/admin set — never fall back to the customer's original snapshot %.
+                    $depositPercent = null;
+                    if (
+                        \Illuminate\Support\Facades\Schema::hasColumn('loan_applications', 'partner_offer_deposit_percent')
+                        && $application->partner_offer_deposit_percent !== null
+                    ) {
+                        $depositPercent = (float) $application->partner_offer_deposit_percent;
+                    }
+                    if (($depositPercent === null || $depositPercent <= 0) && $deposit !== null && $loan !== null && $deposit > 0 && $loan > 0) {
+                        $depositPercent = round(($deposit / ($deposit + $loan)) * 100, 2);
+                    }
+
                     return [
                         'interest_rate' => $rate,
-                        'initial_deposit' => $application->partner_offer_initial_deposit !== null
-                            ? (float) $application->partner_offer_initial_deposit
-                            : null,
+                        'deposit_percent' => $depositPercent,
+                        'initial_deposit' => $deposit,
                         'admin_fees' => $application->partner_offer_admin_fees !== null
                             ? (float) $application->partner_offer_admin_fees
                             : null,

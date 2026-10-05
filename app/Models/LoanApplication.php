@@ -53,6 +53,7 @@ class LoanApplication extends Model
     'counter_offer_min_deposit',
     'counter_offer_min_tenor',
     'partner_offer_interest_rate',
+    'partner_offer_deposit_percent',
     'partner_offer_initial_deposit',
     'partner_offer_admin_fees',
     'partner_offer_repayment_amount',

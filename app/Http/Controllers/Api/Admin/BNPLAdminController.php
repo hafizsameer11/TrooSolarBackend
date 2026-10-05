@@ -356,6 +356,7 @@ class BNPLAdminController extends Controller
                 'counter_offer_min_deposit' => 'required_if:status,counter_offer|numeric|min:0',
                 'counter_offer_min_tenor' => 'required_if:status,counter_offer|integer|in:' . implode(',', $allowedDurations),
                 'partner_offer_interest_rate' => 'required_if:status,partner_offer|numeric|min:0|max:100',
+                'partner_offer_deposit_percent' => 'nullable|numeric|min:0|max:100',
                 'partner_offer_initial_deposit' => 'required_if:status,partner_offer|numeric|min:0',
                 'partner_offer_admin_fees' => 'nullable|numeric|min:0',
                 'partner_offer_repayment_amount' => 'required_if:status,partner_offer|numeric|min:0',
@@ -386,14 +387,25 @@ class BNPLAdminController extends Controller
             if ($request->status === 'partner_offer') {
                 $rate = (float) $request->partner_offer_interest_rate;
                 $loanAmt = (float) $request->partner_offer_loan_amount;
+                $depositAmt = (float) $request->partner_offer_initial_deposit;
                 $tenor = (int) $request->partner_offer_tenor;
                 // Always derive repayment from Loan Summary formula so rate/tenor edits stay consistent:
                 // interest = loan × (rate%/100) × tenor; repayment = loan + interest
                 $computedInterest = round($loanAmt * ($rate / 100) * max($tenor, 0), 2);
                 $repayAmt = round($loanAmt + $computedInterest, 2);
 
+                $depositPct = $request->filled('partner_offer_deposit_percent')
+                    ? (float) $request->partner_offer_deposit_percent
+                    : 0.0;
+                if ($depositPct <= 0 && $depositAmt > 0 && $loanAmt > 0) {
+                    $depositPct = round(($depositAmt / ($depositAmt + $loanAmt)) * 100, 2);
+                }
+
                 $application->partner_offer_interest_rate = $rate;
-                $application->partner_offer_initial_deposit = $request->partner_offer_initial_deposit;
+                if (\Illuminate\Support\Facades\Schema::hasColumn('loan_applications', 'partner_offer_deposit_percent')) {
+                    $application->partner_offer_deposit_percent = $depositPct > 0 ? $depositPct : null;
+                }
+                $application->partner_offer_initial_deposit = $depositAmt;
                 $application->partner_offer_admin_fees = $request->input('partner_offer_admin_fees', 0);
                 $application->partner_offer_repayment_amount = $repayAmt;
                 $application->partner_offer_loan_amount = $loanAmt;
