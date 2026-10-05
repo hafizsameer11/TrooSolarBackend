@@ -427,17 +427,24 @@ class BNPLAdminController extends Controller
                 $application->save();
 
                 // Keep mono in sync so customer Pay Down Payment uses partner terms.
-                if ($application->mono) {
-                    $mono = $application->mono;
-                    $upfront = (float) $request->partner_offer_initial_deposit
-                        + (float) $request->input('partner_offer_admin_fees', 0);
+                // Do not fail the whole status update if mono sync has a problem.
+                try {
+                    if ($application->mono) {
+                        $mono = $application->mono;
+                        $upfront = (float) $request->partner_offer_initial_deposit
+                            + (float) $request->input('partner_offer_admin_fees', 0);
 
-                    $mono->down_payment = $upfront;
-                    $mono->loan_amount = $loanAmt;
-                    $mono->repayment_duration = $tenor;
-                    $mono->interest_rate = $rate;
-                    $mono->total_amount = round($repayAmt + $upfront, 2);
-                    $mono->save();
+                        $mono->down_payment = $upfront;
+                        $mono->loan_amount = $loanAmt;
+                        $mono->repayment_duration = $tenor;
+                        $mono->interest_rate = $rate;
+                        $mono->total_amount = round($repayAmt + $upfront, 2);
+                        $mono->save();
+                    }
+                } catch (\Throwable $monoErr) {
+                    Log::warning('Partner offer mono sync failed: '.$monoErr->getMessage(), [
+                        'application_id' => $application->id,
+                    ]);
                 }
             }
 
