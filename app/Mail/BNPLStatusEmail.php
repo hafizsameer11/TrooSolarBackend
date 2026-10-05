@@ -30,6 +30,7 @@ class BNPLStatusEmail extends Mailable
     public ?float $downPayment;
     public ?int $repaymentDuration;
     public ?float $loanAmount;
+    public ?string $adminNotes = null;
 
     /** @var array<string, mixed>|null */
     public ?array $partnerOffer = null;
@@ -48,6 +49,8 @@ class BNPLStatusEmail extends Mailable
         $this->downPayment = $application->mono ? (float) $application->mono->down_payment : null;
         $this->repaymentDuration = (int) $application->repayment_duration;
         $this->loanAmount = (float) $application->loan_amount;
+        $notes = is_string($application->admin_notes ?? null) ? trim($application->admin_notes) : '';
+        $this->adminNotes = $notes !== '' ? $notes : null;
 
         $bnpl = MailBrand::BNPL_LABEL;
 

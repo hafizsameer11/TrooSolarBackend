@@ -30,6 +30,13 @@
             {{ $bodyText }}
         </div>
 
+        @if(!empty($adminNotes))
+            <div class="details" style="border-left: 4px solid #273e8e;">
+                <p style="margin:0 0 6px 0;"><strong>Admin note</strong></p>
+                <p style="margin:0; white-space: pre-wrap;">{{ $adminNotes }}</p>
+            </div>
+        @endif
+
         @if($status === 'approved')
             <div class="details">
                 <p><strong>Loan amount:</strong> ₦{{ number_format($loanAmount, 2) }}</p>
