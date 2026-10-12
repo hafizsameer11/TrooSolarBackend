@@ -6,6 +6,8 @@ use App\Helpers\ResponseHelper;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\ProductRequest;
 use App\Models\Brand;
+use App\Models\BundleItems;
+use App\Models\Bundles;
 use App\Models\Category;
 use App\Models\Product;
 use Exception;
@@ -123,10 +125,34 @@ class ProductController extends Controller
             $product = Product::find($id);
             if (!$product) return ResponseHelper::error('Product not found.', 404);
 
+            // Bundles that include this product stay as rows after cascade of bundle_items —
+            // hide empty / orphaned shells so they disappear from Buy Solar Bundles.
+            $affectedBundleIds = BundleItems::query()
+                ->where('product_id', $product->id)
+                ->pluck('bundle_id')
+                ->unique()
+                ->filter()
+                ->values()
+                ->all();
+
             $this->deleteImage($product->featured_image);
             $this->deleteGalleryImages($product);
             $product->details()->delete();
             $product->delete();
+
+            if (! empty($affectedBundleIds) && Schema::hasColumn('bundles', 'is_available')) {
+                foreach ($affectedBundleIds as $bundleId) {
+                    $bundle = Bundles::query()->withCount(['bundleItems', 'bundleMaterials'])->find($bundleId);
+                    if (! $bundle) {
+                        continue;
+                    }
+                    // No remaining shop products in the bundle → hide from customer catalog.
+                    if ((int) ($bundle->bundle_items_count ?? 0) === 0) {
+                        $bundle->is_available = false;
+                        $bundle->save();
+                    }
+                }
+            }
 
             return ResponseHelper::success(null, 'Product deleted successfully.');
         } catch (Exception $e) {

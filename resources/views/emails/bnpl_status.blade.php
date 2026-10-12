@@ -62,6 +62,21 @@
                 Or copy this link into your browser:<br>
                 <a href="{{ $continueUrl }}" style="word-break: break-all; color: #273e8e;">{{ $continueUrl }}</a>
             </p>
+        @elseif($status === 'payment_complete')
+            <div class="details">
+                <p><strong>Loan amount:</strong> ₦{{ number_format($loanAmount, 2) }}</p>
+                @if($repaymentDuration > 0)
+                    <p><strong>Repayment period:</strong> {{ $repaymentDuration }} months</p>
+                @endif
+                <p><strong>Status:</strong> Payment Complete</p>
+            </div>
+            <p>
+                <a href="{{ $continueUrl }}" class="btn" target="_blank" rel="noopener noreferrer">View your loan details</a>
+            </p>
+            <p style="font-size: 14px; color: #666;">
+                Or copy this link into your browser:<br>
+                <a href="{{ $continueUrl }}" style="word-break: break-all; color: #273e8e;">{{ $continueUrl }}</a>
+            </p>
         @elseif($status === 'partner_offer')
             @if(!empty($partnerOffer))
             <div class="details">

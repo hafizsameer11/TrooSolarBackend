@@ -31,6 +31,7 @@ use Illuminate\Validation\ValidationException;
 use Exception;
 use App\Models\ReferralSettings;
 use App\Models\AuditRequest;
+use App\Services\InstallmentPaymentRecorder;
 use App\Services\ReferralRewardService;
 use App\Support\CheckoutPricing;
 
@@ -2111,6 +2112,16 @@ class OrderController extends Controller
             $orders = $query->orderBy('created_at', 'desc')
                 ->paginate($request->get('per_page', 15));
 
+            // Self-heal list badges for fully repaid loans (payment_complete).
+            $recorder = app(InstallmentPaymentRecorder::class);
+            foreach ($orders as $order) {
+                if ($order->mono_calculation_id) {
+                    if ($recorder->syncOrderPaymentCompleteForMono((int) $order->mono_calculation_id)) {
+                        $order->refresh();
+                    }
+                }
+            }
+
             return ResponseHelper::success($orders, 'BNPL orders retrieved successfully');
         } catch (Exception $e) {
             Log::error('BNPL Orders Admin Error: ' . $e->getMessage(), [
@@ -2286,6 +2297,7 @@ class OrderController extends Controller
                     'paid_amount' => 0.0,
                     'pending_amount' => 0.0,
                     'overdue_amount' => 0.0,
+                    'loan_fully_paid' => false,
                     'order_customer_id' => $order->user_id,
                     'order_customer_name' => $orderCustomerName,
                     'order_customer_email' => $orderUser?->email,
@@ -2302,11 +2314,22 @@ class OrderController extends Controller
         })->values();
 
         $installments = [];
+        $installmentIndex = 0;
         foreach ($sortedInstallments as $installment) {
+            $installmentIndex++;
             $paymentDate = $installment->payment_date;
             $paidAt = $installment->paid_at;
             $trans = $installment->transaction;
             $transactedAt = $trans ? $trans->transacted_at : null;
+            if (! $paidAt && strtolower((string) $installment->status) === 'paid' && $transactedAt) {
+                $paidAt = $transactedAt;
+                try {
+                    $installment->paid_at = $transactedAt;
+                    $installment->save();
+                } catch (\Throwable $e) {
+                    // non-fatal
+                }
+            }
             $payer = $trans && $trans->relationLoaded('user') ? $trans->user : null;
             if ($trans && ! $payer && $trans->user_id) {
                 $trans->loadMissing('user');
@@ -2320,12 +2343,14 @@ class OrderController extends Controller
                 : null;
 
             $isOverdue = $paymentDate && $paymentDate->lt(now()) && $installment->status !== 'paid';
+            $dueFormatted = $paymentDate ? $paymentDate->format('Y-m-d') : null;
 
             $installmentData = [
                 'id' => $installment->id,
-                'installment_number' => $installment->installment_number ?? null,
+                'installment_number' => $installment->installment_number ?? $installmentIndex,
                 'amount' => (float) $installment->amount,
-                'payment_date' => $paymentDate ? $paymentDate->format('Y-m-d') : null,
+                'payment_date' => $dueFormatted,
+                'due_date' => $dueFormatted,
                 'status' => $installment->status,
                 'paid_at' => $paidAt ? $paidAt->format('Y-m-d H:i:s') : null,
                 'is_overdue' => $isOverdue,
@@ -2353,6 +2378,13 @@ class OrderController extends Controller
         $paidAmount = array_sum(array_column(array_filter($installments, fn ($i) => $i['status'] === 'paid'), 'amount'));
         $pendingAmount = $totalAmount - $paidAmount;
         $overdueAmount = array_sum(array_column(array_filter($installments, fn ($i) => $i['is_overdue'] === true), 'amount'));
+        $loanFullyPaid = $totalInstallments > 0 && $pendingInstallments === 0;
+
+        if ($loanFullyPaid && $order->mono_calculation_id) {
+            app(InstallmentPaymentRecorder::class)
+                ->syncOrderPaymentCompleteForMono((int) $order->mono_calculation_id);
+            $order->refresh();
+        }
 
         $repayments = [];
         $repaymentRows = $mono->loanRepayments->sortByDesc(function ($r) {
@@ -2378,7 +2410,7 @@ class OrderController extends Controller
             ];
         }
 
-        return [
+        $payload = [
             'repayment_schedule' => $installments,
             'repayment_summary' => [
                 'total_installments' => $totalInstallments,
@@ -2389,6 +2421,7 @@ class OrderController extends Controller
                 'paid_amount' => $paidAmount,
                 'pending_amount' => $pendingAmount,
                 'overdue_amount' => $overdueAmount,
+                'loan_fully_paid' => $loanFullyPaid,
                 'order_customer_id' => $order->user_id,
                 'order_customer_name' => $orderCustomerName,
                 'order_customer_email' => $orderUser?->email,
@@ -2401,7 +2434,14 @@ class OrderController extends Controller
                 'repayment_duration' => $mono->repayment_duration,
                 'interest_rate' => $mono->interest_rate,
             ],
+            'loan_fully_paid' => $loanFullyPaid,
         ];
+
+        if ($loanFullyPaid) {
+            $payload['order_status'] = InstallmentPaymentRecorder::ORDER_STATUS_PAYMENT_COMPLETE;
+        }
+
+        return $payload;
     }
 
     /**

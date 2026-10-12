@@ -25,6 +25,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
 use App\Services\BnplLoanPlanCalculator;
+use App\Services\InstallmentPaymentRecorder;
 use App\Services\ReferralRewardService;
 use App\Services\MonoService;
 use App\Services\MonoDirectDebitService;
@@ -741,14 +742,20 @@ class BNPLController extends Controller
             $applications = $query->orderBy('created_at', 'desc')
                 ->paginate($request->get('per_page', 15));
 
-            $formattedData = $applications->getCollection()->map(function ($application) {
+            $recorder = app(InstallmentPaymentRecorder::class);
+            $formattedData = $applications->getCollection()->map(function ($application) use ($recorder) {
+                if ($application->mono_loan_calculation) {
+                    if ($recorder->syncOrderPaymentCompleteForMono((int) $application->mono_loan_calculation)) {
+                        $application->refresh();
+                    }
+                }
                 return [
                     'id' => $application->id,
                     'customer_type' => $application->customer_type,
                     'product_category' => $application->product_category,
                     'loan_amount' => number_format((float) $application->loan_amount, 2),
                     'repayment_duration' => $application->repayment_duration,
-                    'status' => $application->status, // pending, approved, rejected, counter_offer
+                    'status' => $application->status, // pending, approved, rejected, counter_offer, payment_complete
                     'financing_path' => $application->financing_path ?: 'troosolar',
                     'property_state' => $application->property_state,
                     'property_address' => $application->property_address,
@@ -801,6 +808,13 @@ class BNPLController extends Controller
                 return ResponseHelper::error('Application not found', 404);
             }
 
+            if ($application->mono_loan_calculation) {
+                app(InstallmentPaymentRecorder::class)
+                    ->syncOrderPaymentCompleteForMono((int) $application->mono_loan_calculation);
+                $application->refresh();
+                $application->loadMissing(['mono', 'guarantor']);
+            }
+
             // Prefer stored loan plan snapshot (matches "Review Your Loan Plan" in the dashboard)
             $loanCalculationDetails = $this->buildLoanCalculationForStatus($application);
 
@@ -819,42 +833,30 @@ class BNPLController extends Controller
                 }
             }
 
-            // Counter offer: same math as customer "Review Your Loan Plan" (bundle % deposit + admin fees + interest)
+            // Counter offer breakdown — keep for any status that still has stored terms
+            // (counter_offer, counter_offer_accepted, approved after down payment, etc.)
             $counterOfferDetails = null;
-            if ($application->status === 'counter_offer' &&
-                $application->counter_offer_min_deposit !== null &&
-                $application->counter_offer_min_tenor !== null) {
+            $counterOfferMinDepositOut = $application->counter_offer_min_deposit !== null
+                ? (float) $application->counter_offer_min_deposit
+                : null;
+            $hadCounterOffer = $application->counter_offer_min_deposit !== null
+                && $application->counter_offer_min_tenor !== null;
+            if ($hadCounterOffer) {
                 $snap = is_array($application->loan_plan_snapshot) ? $application->loan_plan_snapshot : [];
-                $bundle = BnplLoanPlanCalculator::bundlePriceFromSnapshot($snap);
-                $feePcts = BnplLoanPlanCalculator::feePercentagesFromSnapshot($snap);
                 $monoLoan = $application->mono;
-                $interestMonthly = BnplLoanPlanCalculator::interestMonthlyPercentFromSnapshot(
-                    $snap,
-                    (float) ($monoLoan->interest_rate ?? 4)
-                );
                 $upfront = (float) $application->counter_offer_min_deposit;
                 $duration = (int) $application->counter_offer_min_tenor;
-                if ($bundle > 0 && $upfront > 0 && $duration > 0) {
-                    $plan = BnplLoanPlanCalculator::computeFromUpfrontTotal(
-                        $bundle,
-                        $upfront,
-                        $duration,
-                        $interestMonthly,
-                        $feePcts
-                    );
-                    $counterOfferDetails = [
-                        'bundle_price' => number_format($plan['bundle_price'], 2),
-                        'loan_amount' => number_format($plan['total_loan_amount'], 2),
-                        'down_payment' => number_format($upfront, 2),
-                        'upfront_deposit_total' => number_format($plan['upfront_deposit_total'], 2),
-                        'admin_fees_total' => number_format($plan['admin_fees_total'], 2),
-                        'total_interest_amount' => number_format($plan['total_interest_amount'], 2),
-                        'repayment_duration' => $duration,
-                        'interest_rate' => $interestMonthly,
-                        'total_amount' => number_format($plan['total_repayment_amount'], 2),
-                        'total_repayment_amount' => number_format($plan['total_repayment_amount'], 2),
-                        'monthly_payment' => number_format($plan['monthly_repayment_amount'], 2),
-                    ];
+                $counterOfferDetails = BnplLoanPlanCalculator::buildCounterOfferDetailsPayload(
+                    $snap,
+                    $upfront,
+                    $duration,
+                    (float) ($monoLoan->interest_rate ?? 4)
+                );
+                if ($counterOfferDetails !== null && isset($counterOfferDetails['upfront_deposit_total'])) {
+                    $parsedUpfront = (float) str_replace(',', '', (string) $counterOfferDetails['upfront_deposit_total']);
+                    if ($parsedUpfront > 0) {
+                        $counterOfferMinDepositOut = $parsedUpfront;
+                    }
                 }
             }
 
@@ -868,7 +870,8 @@ class BNPLController extends Controller
                 'financing_path' => $application->financing_path ?: 'troosolar',
                 'financing_partner_id' => $application->financing_partner_id,
                 'admin_notes' => $application->admin_notes,
-                'counter_offer_min_deposit' => $application->counter_offer_min_deposit !== null ? (float) $application->counter_offer_min_deposit : null,
+                'had_counter_offer' => $hadCounterOffer,
+                'counter_offer_min_deposit' => $counterOfferMinDepositOut,
                 'counter_offer_min_tenor' => $application->counter_offer_min_tenor,
                 'partner_offer' => (function () use ($application) {
                     $rate = $application->partner_offer_interest_rate !== null
@@ -961,6 +964,8 @@ class BNPLController extends Controller
                 'installation_requested_date' => $this->formatDateValue($application->installation_requested_date, 'Y-m-d'),
                 'installation_booking_status' => $application->installation_booking_status,
                 'installation_rejected_dates' => $application->installation_rejected_dates ?? [],
+                'installation_admin_proposed_date' => $this->formatDateValue($application->installation_admin_proposed_date, 'Y-m-d'),
+                'installation_rejection_note' => $application->installation_rejection_note,
                 'order_id' => $orderInfo ? $orderInfo['order_id'] : null,
                 'order_number' => $orderInfo ? $orderInfo['order_number'] : null,
                 'down_payment_completed' => $orderInfo ? $orderInfo['down_payment_completed'] : false,
@@ -1301,34 +1306,22 @@ class BNPLController extends Controller
                 return ResponseHelper::error('Loan calculation not found for this application', 404);
             }
 
-            $downPayment = (float) $data['minimum_deposit'];
-            $duration = (int) $data['minimum_tenor'];
+            $storedUpfront = (float) ($application->counter_offer_min_deposit ?? $data['minimum_deposit']);
+            $duration = (int) ($application->counter_offer_min_tenor ?? $data['minimum_tenor']);
             $snap = is_array($application->loan_plan_snapshot) ? $application->loan_plan_snapshot : [];
-            $bundle = BnplLoanPlanCalculator::bundlePriceFromSnapshot($snap);
-            if ($bundle <= 0) {
-                return ResponseHelper::error(
-                    'This application is missing loan plan (bundle) data. Contact support or re-apply from the BNPL flow.',
-                    422
-                );
-            }
-            $feePcts = BnplLoanPlanCalculator::feePercentagesFromSnapshot($snap);
-            $interestMonthly = BnplLoanPlanCalculator::interestMonthlyPercentFromSnapshot(
+            $plan = BnplLoanPlanCalculator::resolveCounterOfferPlanFromStored(
                 $snap,
+                $storedUpfront,
+                $duration,
                 (float) ($mono->interest_rate ?? 4)
             );
-            $plan = BnplLoanPlanCalculator::computeFromUpfrontTotal(
-                $bundle,
-                $downPayment,
-                $duration,
-                $interestMonthly,
-                $feePcts
-            );
-            if ((float) $plan['base_deposit'] <= 0 || (float) $plan['base_loan_amount'] <= 0) {
+            if ($plan === null || (float) $plan['base_deposit'] <= 0 || (float) $plan['base_loan_amount'] <= 0) {
                 return ResponseHelper::error(
                     'The counter-offer upfront amount is too low for this bundle and fee structure. Increase the minimum deposit percentage in admin and try again.',
                     422
                 );
             }
+            $downPayment = (float) $plan['upfront_deposit_total'];
             $totalRepayment = (float) $plan['total_repayment_amount'];
             $monthlyPayment = (float) $plan['monthly_repayment_amount'];
             $principal = (float) $plan['base_loan_amount'];
@@ -1339,6 +1332,7 @@ class BNPLController extends Controller
             $mono->total_amount = round($totalRepayment + $downPayment, 2);
             $mono->save();
 
+            $application->counter_offer_min_deposit = $downPayment;
             $application->loan_amount = $totalRepayment;
             $application->repayment_duration = $duration;
             $application->status = 'counter_offer_accepted';
@@ -1609,7 +1603,13 @@ class BNPLController extends Controller
             $orders = $query->orderBy('created_at', 'desc')
                 ->paginate($request->get('per_page', 15));
 
-            $formattedData = $orders->getCollection()->map(function ($order) {
+            $recorder = app(InstallmentPaymentRecorder::class);
+            $formattedData = $orders->getCollection()->map(function ($order) use ($recorder) {
+                if ($order->mono_calculation_id) {
+                    $recorder->syncOrderPaymentCompleteForMono((int) $order->mono_calculation_id);
+                    $order->refresh();
+                    $order->loadMissing(['items.itemable', 'deliveryAddress', 'monoCalculation.loanInstallments']);
+                }
                 return $this->formatBnplOrder($order);
             });
 
@@ -1670,21 +1670,37 @@ class BNPLController extends Controller
             $repaymentSchedule = [];
             if ($order->monoCalculation) {
                 $allInstallments = $order->monoCalculation->loanInstallments()
+                    ->with('transaction')
                     ->orderBy('payment_date', 'asc')
                     ->get();
-                
+                $installmentIndex = 0;
                 foreach ($allInstallments as $installment) {
+                    $installmentIndex++;
                     $paymentDate = $this->toCarbon($installment->payment_date);
                     $paidAt = $this->toCarbon($installment->paid_at);
                     $transactedAt = $installment->transaction
                         ? $this->toCarbon($installment->transaction->transacted_at)
                         : null;
+                    // If marked paid but paid_at was never stored, fall back to transaction time (and persist).
+                    if (! $paidAt && strtolower((string) $installment->status) === 'paid' && $transactedAt) {
+                        $paidAt = $transactedAt;
+                        try {
+                            $installment->paid_at = $transactedAt;
+                            $installment->save();
+                        } catch (\Throwable $e) {
+                            // non-fatal
+                        }
+                    }
+                    $dueFormatted = $paymentDate ? $paymentDate->format('Y-m-d') : null;
                     $installmentData = [
                         'id' => $installment->id,
-                        'installment_number' => $installment->installment_number ?? null,
+                        'installment_number' => $installment->installment_number ?? $installmentIndex,
                         'amount' => (float) $installment->amount,
-                        'payment_date' => $paymentDate ? $paymentDate->format('Y-m-d') : null,
+                        // Scheduled due date (historically named payment_date in DB)
+                        'payment_date' => $dueFormatted,
+                        'due_date' => $dueFormatted,
                         'status' => $installment->status,
+                        // When the customer actually paid
                         'paid_at' => $paidAt ? $paidAt->format('Y-m-d H:i:s') : null,
                         'is_overdue' => $paymentDate && $paymentDate->lt(now()) && $installment->status !== 'paid',
                         'transaction' => $installment->transaction ? [
@@ -1725,6 +1741,14 @@ class BNPLController extends Controller
             $totalAmount = array_sum(array_column($installments, 'amount'));
             $paidAmount = array_sum(array_column(array_filter($installments, fn($i) => $i['status'] === 'paid'), 'amount'));
             $pendingAmount = $totalAmount - $paidAmount;
+            $loanFullyPaid = $totalInstallments > 0 && $pendingInstallments === 0;
+
+            // Self-heal: orders already fully repaid before this status existed.
+            if ($loanFullyPaid && $order->mono_calculation_id) {
+                app(InstallmentPaymentRecorder::class)
+                    ->syncOrderPaymentCompleteForMono((int) $order->mono_calculation_id);
+                $order->refresh();
+            }
 
             $orderData = $this->formatBnplOrder($order);
             // For BNPL orders without a linked delivery address, use application's property address
@@ -1737,6 +1761,19 @@ class BNPLController extends Controller
                     'phone_number' => $user ? $user->phone : null,
                 ];
             }
+            $orderCounterOfferDetails = null;
+            $orderHadCounterOffer = $loanApplication
+                && $loanApplication->counter_offer_min_deposit !== null
+                && $loanApplication->counter_offer_min_tenor !== null;
+            if ($orderHadCounterOffer) {
+                $orderSnap = is_array($loanApplication->loan_plan_snapshot) ? $loanApplication->loan_plan_snapshot : [];
+                $orderCounterOfferDetails = BnplLoanPlanCalculator::buildCounterOfferDetailsPayload(
+                    $orderSnap,
+                    (float) $loanApplication->counter_offer_min_deposit,
+                    (int) $loanApplication->counter_offer_min_tenor,
+                    (float) ($loanApplication->mono->interest_rate ?? 4)
+                );
+            }
             $orderData['loan_application'] = $loanApplication ? [
                 'id' => $loanApplication->id,
                 'status' => $loanApplication->status,
@@ -1748,6 +1785,12 @@ class BNPLController extends Controller
                 'credit_check_method' => $loanApplication->credit_check_method,
                 'loan_plan_snapshot' => $loanApplication->loan_plan_snapshot,
                 'admin_notes' => $loanApplication->admin_notes,
+                'had_counter_offer' => $orderHadCounterOffer,
+                'counter_offer_min_deposit' => $loanApplication->counter_offer_min_deposit !== null
+                    ? (float) $loanApplication->counter_offer_min_deposit
+                    : null,
+                'counter_offer_min_tenor' => $loanApplication->counter_offer_min_tenor,
+                'counter_offer_details' => $orderCounterOfferDetails,
                 'partner_offer_interest_rate' => $loanApplication->partner_offer_interest_rate !== null
                     ? (float) $loanApplication->partner_offer_interest_rate
                     : null,
@@ -1785,7 +1828,16 @@ class BNPLController extends Controller
                 'installation_requested_date' => $this->formatDateValue($loanApplication->installation_requested_date, 'Y-m-d'),
                 'installation_booking_status' => $loanApplication->installation_booking_status,
                 'installation_rejected_dates' => $loanApplication->installation_rejected_dates ?? [],
+                'installation_admin_proposed_date' => $this->formatDateValue($loanApplication->installation_admin_proposed_date, 'Y-m-d'),
+                'installation_rejection_note' => $loanApplication->installation_rejection_note,
             ] : null;
+            // Keep counter offer visible on order view after down payment.
+            $orderData['had_counter_offer'] = $orderHadCounterOffer;
+            $orderData['counter_offer_min_deposit'] = $loanApplication && $loanApplication->counter_offer_min_deposit !== null
+                ? (float) $loanApplication->counter_offer_min_deposit
+                : null;
+            $orderData['counter_offer_min_tenor'] = $loanApplication?->counter_offer_min_tenor;
+            $orderData['counter_offer_details'] = $orderCounterOfferDetails;
             // Keep partner offer visible on order view after down payment (status becomes approved).
             $orderData['partner_offer'] = $loanApplication ? [
                 'interest_rate' => $loanApplication->partner_offer_interest_rate !== null
@@ -1832,7 +1884,12 @@ class BNPLController extends Controller
                 'total_amount' => $totalAmount,
                 'paid_amount' => $paidAmount,
                 'pending_amount' => $pendingAmount,
+                'loan_fully_paid' => $loanFullyPaid,
             ];
+            if ($loanFullyPaid) {
+                $orderData['order_status'] = InstallmentPaymentRecorder::ORDER_STATUS_PAYMENT_COMPLETE;
+                $orderData['loan_fully_paid'] = true;
+            }
             $orderData['repayment_history'] = $repayments;
             $orderData['loan_details'] = $order->monoCalculation ? [
                 'loan_amount' => (float) ($order->monoCalculation->loan_amount ?? 0),
@@ -1886,18 +1943,34 @@ class BNPLController extends Controller
             }
 
             $installments = $application->mono->loanInstallments()
+                ->with('transaction')
                 ->orderBy('payment_date', 'asc')
                 ->get();
 
             $schedule = [];
+            $installmentIndex = 0;
             foreach ($installments as $installment) {
+                $installmentIndex++;
+                $dueFormatted = $installment->payment_date ? $installment->payment_date->format('Y-m-d') : null;
+                $paidAt = $installment->paid_at;
+                $transactedAt = $installment->transaction?->transacted_at;
+                if (! $paidAt && strtolower((string) $installment->status) === 'paid' && $transactedAt) {
+                    $paidAt = $transactedAt;
+                    try {
+                        $installment->paid_at = $transactedAt;
+                        $installment->save();
+                    } catch (\Throwable $e) {
+                        // non-fatal
+                    }
+                }
                 $schedule[] = [
                     'id' => $installment->id,
-                    'installment_number' => $installment->installment_number ?? null,
+                    'installment_number' => $installment->installment_number ?? $installmentIndex,
                     'amount' => (float) $installment->amount,
-                    'payment_date' => $installment->payment_date ? $installment->payment_date->format('Y-m-d') : null,
+                    'payment_date' => $dueFormatted,
+                    'due_date' => $dueFormatted,
                     'status' => $installment->status,
-                    'paid_at' => $installment->paid_at ? $installment->paid_at->format('Y-m-d H:i:s') : null,
+                    'paid_at' => $paidAt ? $paidAt->format('Y-m-d H:i:s') : null,
                     'is_overdue' => $installment->payment_date && $installment->payment_date->lt(now()) && $installment->status !== 'paid',
                     'days_until_due' => $installment->payment_date ? now()->diffInDays($installment->payment_date, false) : null,
                     'transaction' => $installment->transaction ? [
@@ -1905,7 +1978,9 @@ class BNPLController extends Controller
                         'tx_id' => $installment->transaction->tx_id,
                         'method' => $installment->transaction->method,
                         'amount' => (float) $installment->transaction->amount,
-                        'transacted_at' => $installment->transaction->transacted_at ? $installment->transaction->transacted_at->format('Y-m-d H:i:s') : null,
+                        'transacted_at' => $installment->transaction->transacted_at
+                            ? $installment->transaction->transacted_at->format('Y-m-d H:i:s')
+                            : null,
                     ] : null,
                 ];
             }
@@ -1990,13 +2065,23 @@ class BNPLController extends Controller
             if (in_array($request->requested_date, $rejected)) {
                 return ResponseHelper::error('This date was previously rejected. Please choose another date.', 422);
             }
+            $proposed = $this->formatDateValue($loanApplication->installation_admin_proposed_date, 'Y-m-d');
+            $isAdminSuggested = $proposed && $proposed === $request->requested_date;
             $loanApplication->installation_requested_date = $requestedDate;
-            $loanApplication->installation_booking_status = 'pending';
+            // Accepting Troosolar's suggested date confirms it immediately; otherwise await admin review.
+            $loanApplication->installation_booking_status = $isAdminSuggested ? 'accepted' : 'pending';
+            if ($isAdminSuggested) {
+                $loanApplication->installation_admin_proposed_date = null;
+                $loanApplication->installation_rejection_note = null;
+            }
             $loanApplication->save();
+            $msg = $isAdminSuggested
+                ? 'Installation date confirmed for ' . $request->requested_date . '.'
+                : 'Installation date request submitted. You will be notified once it is confirmed.';
             return ResponseHelper::success([
                 'installation_requested_date' => $this->formatDateValue($loanApplication->installation_requested_date, 'Y-m-d'),
                 'installation_booking_status' => $loanApplication->installation_booking_status,
-            ], 'Installation date request submitted. You will be notified once it is confirmed.');
+            ], $msg);
         } catch (\Illuminate\Validation\ValidationException $e) {
             throw $e;
         } catch (Exception $e) {
@@ -2030,11 +2115,19 @@ class BNPLController extends Controller
             }
         }
 
+        $pendingInstallmentsCount = $installmentsCount - $paidInstallmentsCount;
+        $loanFullyPaid = $installmentsCount > 0 && $pendingInstallmentsCount === 0;
+        $orderStatus = $order->order_status;
+        if ($loanFullyPaid) {
+            $orderStatus = InstallmentPaymentRecorder::ORDER_STATUS_PAYMENT_COMPLETE;
+        }
+
         return [
             'id' => $order->id,
             'order_number' => $order->order_number,
-            'order_status' => $order->order_status,
+            'order_status' => $orderStatus,
             'payment_status' => $order->payment_status,
+            'loan_fully_paid' => $loanFullyPaid,
             'total_price' => (float) $order->total_price,
             'items' => $order->items->map(function ($item) {
                 return [
@@ -2054,7 +2147,8 @@ class BNPLController extends Controller
             'loan_summary' => [
                 'total_installments' => $installmentsCount,
                 'paid_installments' => $paidInstallmentsCount,
-                'pending_installments' => $installmentsCount - $paidInstallmentsCount,
+                'pending_installments' => $pendingInstallmentsCount,
+                'loan_fully_paid' => $loanFullyPaid,
                 'next_payment_date' => $nextPaymentDate,
                 'next_payment_amount' => $nextPaymentAmount,
             ],

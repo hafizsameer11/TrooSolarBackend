@@ -3,8 +3,10 @@
 namespace App\Services;
 
 /**
- * Mirrors customer BNPL "Review Your Loan Plan" math (BNPLFlow buildLoanReviewSnapshot):
- * bundle price, % deposit on bundle, admin fees (insurance on bundle; mgmt/legal on loan amount), interest = monthly% × tenor on principal.
+ * Mirrors customer BNPL "Review Your Loan Plan" math (LoanCalculator.jsx + BNPLFlow):
+ * - Deposit % / loan principal on loan calculator total (invoice grand total)
+ * - Insurance % of catalog bundle price (order Sub-Total), NOT of calculator total
+ * - Management / legal % of loan amount
  */
 class BnplLoanPlanCalculator
 {
@@ -22,12 +24,11 @@ class BnplLoanPlanCalculator
     }
 
     /**
-     * LoanCalculator passes `totalAmount` = cart grand total (items + install/delivery/inspection + VAT).
-     * That equals principal + equity deposit. Prefer that sum from snapshot — it matches BNPLFlow + LoanCalculator.jsx.
+     * Loan calculator total (principal + equity deposit) — same as LoanCalculator grandTotal.
      *
      * @param  array<string, mixed>|null  $snap  loan_plan_snapshot (formData.loanDetails JSON)
      */
-    public static function bundlePriceFromSnapshot(?array $snap): float
+    public static function loanCalculatorTotalFromSnapshot(?array $snap): float
     {
         if (! is_array($snap) || $snap === []) {
             return 0.0;
@@ -37,18 +38,56 @@ class BnplLoanPlanCalculator
         if ($principal > 0 && $baseDep >= 0) {
             return max($principal + $baseDep, 0.0);
         }
+        $grand = self::toFloat($snap['grandTotal'] ?? $snap['invoiceGrandTotal'] ?? 0);
+        if ($grand > 0) {
+            return $grand;
+        }
+        // After Review proceed, totalAmount may be grandTotal + admin fees.
         $totalAmount = self::toFloat($snap['totalAmount'] ?? 0);
-        $adminFees = self::toFloat($snap['adminFeesTotal'] ?? 0);
+        $adminFees = self::toFloat($snap['adminFeesTotal'] ?? $snap['feesTotal'] ?? 0);
         if ($adminFees <= 0) {
             $adminFees = self::toFloat($snap['insuranceFee'] ?? 0)
                 + self::toFloat($snap['managementFee'] ?? 0)
                 + self::toFloat($snap['legalFee'] ?? 0);
         }
-        if ($totalAmount > 0) {
+        if ($totalAmount > 0 && $adminFees > 0) {
             return max($totalAmount - $adminFees, 0.0);
+        }
+        if ($totalAmount > 0) {
+            return $totalAmount;
         }
 
         return 0.0;
+    }
+
+    /**
+     * Catalog bundle / product subtotal for insurance — same as LoanCalculator bundlePrice prop.
+     *
+     * @param  array<string, mixed>|null  $snap
+     */
+    public static function catalogBundlePriceFromSnapshot(?array $snap): float
+    {
+        if (! is_array($snap) || $snap === []) {
+            return 0.0;
+        }
+        foreach (['bundlePrice', 'netAmount', 'amountExcludingVat', 'catalogSubtotal'] as $k) {
+            $v = self::toFloat($snap[$k] ?? 0);
+            if ($v > 0) {
+                return $v;
+            }
+        }
+
+        return 0.0;
+    }
+
+    /**
+     * @deprecated Use loanCalculatorTotalFromSnapshot — kept for call-site compatibility.
+     *
+     * @param  array<string, mixed>|null  $snap
+     */
+    public static function bundlePriceFromSnapshot(?array $snap): float
+    {
+        return self::loanCalculatorTotalFromSnapshot($snap);
     }
 
     /**
@@ -94,21 +133,26 @@ class BnplLoanPlanCalculator
      * @return array<string, float>
      */
     public static function computeFromDepositPercent(
-        float $bundlePrice,
+        float $loanCalculatorTotal,
         float $depositPercentOfBundle,
         int $tenorMonths,
         float $interestMonthlyPercent,
-        array $feePcts
+        array $feePcts,
+        ?float $catalogBundlePrice = null
     ): array {
         $i = $feePcts['insurance'] / 100;
         $m = $feePcts['management'] / 100;
         $l = $feePcts['legal'] / 100;
 
-        // Same as LoanCalculator.jsx: depositAmount = (totalAmount * depositPercent) / 100; principal = totalAmount - depositAmount
-        $baseDeposit = $bundlePrice * ($depositPercentOfBundle / 100.0);
-        $baseLoanAmount = max($bundlePrice - $baseDeposit, 0.0);
+        $insuranceBase = ($catalogBundlePrice !== null && $catalogBundlePrice > 0)
+            ? $catalogBundlePrice
+            : $loanCalculatorTotal;
 
-        $insuranceFee = round($bundlePrice * $i, 2);
+        // Same as LoanCalculator.jsx: deposit on grandTotal; insurance on catalog bundle price
+        $baseDeposit = $loanCalculatorTotal * ($depositPercentOfBundle / 100.0);
+        $baseLoanAmount = max($loanCalculatorTotal - $baseDeposit, 0.0);
+
+        $insuranceFee = round($insuranceBase * $i, 2);
         $managementFee = round($baseLoanAmount * $m, 2);
         $legalFee = round($baseLoanAmount * $l, 2);
         $feesTotal = round($insuranceFee + $managementFee + $legalFee, 2);
@@ -119,7 +163,8 @@ class BnplLoanPlanCalculator
         $monthlyRepaymentAmount = $tenorMonths > 0 ? round($totalRepaymentAmount / $tenorMonths, 2) : 0.0;
 
         return [
-            'bundle_price' => round($bundlePrice, 2),
+            'bundle_price' => round($loanCalculatorTotal, 2),
+            'catalog_bundle_price' => round($insuranceBase, 2),
             'deposit_percent' => $depositPercentOfBundle,
             'base_deposit' => $baseDeposit,
             'base_loan_amount' => $baseLoanAmount,
@@ -140,9 +185,13 @@ class BnplLoanPlanCalculator
      *
      * @param  array{insurance: float, management: float, legal: float}  $feePcts
      */
-    public static function solveBaseDepositFromUpfront(float $bundlePrice, float $upfrontTotal, array $feePcts): float
-    {
-        if ($bundlePrice <= 0 || $upfrontTotal <= 0) {
+    public static function solveBaseDepositFromUpfront(
+        float $loanCalculatorTotal,
+        float $upfrontTotal,
+        array $feePcts,
+        ?float $catalogBundlePrice = null
+    ): float {
+        if ($loanCalculatorTotal <= 0 || $upfrontTotal <= 0) {
             return 0.0;
         }
         $i = $feePcts['insurance'] / 100;
@@ -152,7 +201,11 @@ class BnplLoanPlanCalculator
         if ($denom <= 0.0001) {
             return 0.0;
         }
-        $base = ($upfrontTotal - $bundlePrice * ($i + $m + $l)) / $denom;
+        $insuranceBase = ($catalogBundlePrice !== null && $catalogBundlePrice > 0)
+            ? $catalogBundlePrice
+            : $loanCalculatorTotal;
+        // upfront = baseDeposit + insuranceBase*i + (loanCalcTotal - baseDeposit)*(m+l)
+        $base = ($upfrontTotal - $insuranceBase * $i - $loanCalculatorTotal * ($m + $l)) / $denom;
 
         return max(0.0, round($base, 2));
     }
@@ -164,21 +217,166 @@ class BnplLoanPlanCalculator
      * @return array<string, float>
      */
     public static function computeFromUpfrontTotal(
-        float $bundlePrice,
+        float $loanCalculatorTotal,
         float $upfrontTotal,
         int $tenorMonths,
         float $interestMonthlyPercent,
-        array $feePcts
+        array $feePcts,
+        ?float $catalogBundlePrice = null
     ): array {
-        $baseDeposit = self::solveBaseDepositFromUpfront($bundlePrice, $upfrontTotal, $feePcts);
-        $depositPercent = $bundlePrice > 0 ? ($baseDeposit / $bundlePrice) * 100 : 0.0;
+        $baseDeposit = self::solveBaseDepositFromUpfront(
+            $loanCalculatorTotal,
+            $upfrontTotal,
+            $feePcts,
+            $catalogBundlePrice
+        );
+        $depositPercent = $loanCalculatorTotal > 0 ? ($baseDeposit / $loanCalculatorTotal) * 100 : 0.0;
 
         return self::computeFromDepositPercent(
-            $bundlePrice,
+            $loanCalculatorTotal,
             $depositPercent,
             $tenorMonths,
             $interestMonthlyPercent,
-            $feePcts
+            $feePcts,
+            $catalogBundlePrice
         );
+    }
+
+    /**
+     * Deposit % of loan calculator total implied by a stored upfront (equity + admin fees).
+     *
+     * @param  array{insurance: float, management: float, legal: float}  $feePcts
+     */
+    public static function depositPercentFromUpfrontTotal(
+        float $loanCalculatorTotal,
+        float $upfrontTotal,
+        array $feePcts,
+        ?float $catalogBundlePrice = null
+    ): float {
+        $base = self::solveBaseDepositFromUpfront(
+            $loanCalculatorTotal,
+            $upfrontTotal,
+            $feePcts,
+            $catalogBundlePrice
+        );
+        if ($loanCalculatorTotal <= 0 || $base <= 0) {
+            return 0.0;
+        }
+
+        return min(100.0, ($base / $loanCalculatorTotal) * 100.0);
+    }
+
+    /**
+     * Resolve counter-offer plan from stored ₦ upfront + tenor.
+     * Admin enters whole deposit %; older rows may have inflated insurance (1% of calculator total).
+     * Prefer the invert that lands closest to a whole percent, then recompute with catalog-bundle insurance.
+     *
+     * @param  array<string, mixed>|null  $snap
+     * @return array<string, float>|null
+     */
+    public static function resolveCounterOfferPlanFromStored(
+        ?array $snap,
+        float $storedUpfront,
+        int $tenorMonths,
+        float $interestMonthlyFallback = 4.0
+    ): ?array {
+        $loanCalcTotal = self::loanCalculatorTotalFromSnapshot($snap);
+        $catalogBundle = self::catalogBundlePriceFromSnapshot($snap);
+        $feePcts = self::feePercentagesFromSnapshot($snap);
+        $interestMonthly = self::interestMonthlyPercentFromSnapshot($snap, $interestMonthlyFallback);
+        if ($loanCalcTotal <= 0 || $storedUpfront <= 0 || $tenorMonths <= 0) {
+            return null;
+        }
+
+        $catalogOrNull = $catalogBundle > 0 ? $catalogBundle : null;
+        $pctCatalog = self::depositPercentFromUpfrontTotal(
+            $loanCalcTotal,
+            $storedUpfront,
+            $feePcts,
+            $catalogOrNull
+        );
+        // Legacy invert: insurance was wrongly applied on loan calculator total.
+        $pctLegacy = self::depositPercentFromUpfrontTotal(
+            $loanCalcTotal,
+            $storedUpfront,
+            $feePcts,
+            $loanCalcTotal
+        );
+
+        $score = static function (float $p): float {
+            if ($p <= 0) {
+                return PHP_FLOAT_MAX;
+            }
+
+            return abs($p - round($p));
+        };
+
+        $chosen = $score($pctLegacy) < $score($pctCatalog) ? $pctLegacy : $pctCatalog;
+        if ($chosen <= 0) {
+            return null;
+        }
+        // Admin always enters whole deposit % (e.g. 30, 40, 50).
+        $depositPercent = round($chosen);
+
+        return self::computeFromDepositPercent(
+            $loanCalcTotal,
+            $depositPercent,
+            $tenorMonths,
+            $interestMonthly,
+            $feePcts,
+            $catalogOrNull
+        );
+    }
+
+    /**
+     * API-ready counter-offer breakdown (persists for any status that still has stored terms).
+     *
+     * @param  array<string, mixed>|null  $snap
+     * @return array<string, mixed>|null
+     */
+    public static function buildCounterOfferDetailsPayload(
+        ?array $snap,
+        float $storedUpfront,
+        int $tenorMonths,
+        float $interestMonthlyFallback = 4.0
+    ): ?array {
+        $plan = self::resolveCounterOfferPlanFromStored(
+            $snap,
+            $storedUpfront,
+            $tenorMonths,
+            $interestMonthlyFallback
+        );
+        if ($plan === null) {
+            return null;
+        }
+        $feePcts = self::feePercentagesFromSnapshot($snap);
+        $interestMonthly = self::interestMonthlyPercentFromSnapshot($snap, $interestMonthlyFallback);
+        $depositPct = (float) ($plan['deposit_percent'] ?? 0);
+        $correctedUpfront = (float) $plan['upfront_deposit_total'];
+
+        return [
+            'bundle_price' => number_format($plan['bundle_price'], 2),
+            'catalog_bundle_price' => number_format($plan['catalog_bundle_price'] ?? 0, 2),
+            'deposit_percent' => $depositPct,
+            'loan_amount' => number_format($plan['total_loan_amount'], 2),
+            'total_loan_amount' => number_format($plan['total_loan_amount'], 2),
+            'down_payment' => number_format($correctedUpfront, 2),
+            'upfront_deposit_total' => number_format($correctedUpfront, 2),
+            'base_deposit' => number_format($plan['base_deposit'], 2),
+            'admin_fees_total' => number_format($plan['admin_fees_total'], 2),
+            'insurance_fee' => number_format($plan['insurance_fee'], 2),
+            'management_fee' => number_format($plan['management_fee'], 2),
+            'legal_fee' => number_format($plan['legal_fee'], 2),
+            'insurance_pct' => $feePcts['insurance'],
+            'management_pct' => $feePcts['management'],
+            'legal_pct' => $feePcts['legal'],
+            'total_interest_amount' => number_format($plan['total_interest_amount'], 2),
+            'repayment_duration' => $tenorMonths,
+            'interest_rate' => $interestMonthly,
+            'total_amount' => number_format($plan['total_repayment_amount'], 2),
+            'total_repayment_amount' => number_format($plan['total_repayment_amount'], 2),
+            'monthly_payment' => number_format($plan['monthly_repayment_amount'], 2),
+            'monthly_repayment_amount' => number_format($plan['monthly_repayment_amount'], 2),
+        ];
     }
 }

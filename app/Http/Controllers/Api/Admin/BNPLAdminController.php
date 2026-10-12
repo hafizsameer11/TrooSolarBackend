@@ -17,6 +17,7 @@ use App\Models\Notification;
 use App\Models\Order;
 use App\Models\Product;
 use App\Services\BnplLoanPlanCalculator;
+use App\Services\InstallmentPaymentRecorder;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -65,6 +66,16 @@ class BNPLAdminController extends Controller
             $applications = $query->orderBy('created_at', 'desc')
                 ->paginate($request->get('per_page', 15));
 
+            // Self-heal: fully repaid loans → payment_complete (status + email once).
+            $recorder = app(InstallmentPaymentRecorder::class);
+            foreach ($applications as $application) {
+                if ($application->mono_loan_calculation) {
+                    if ($recorder->syncOrderPaymentCompleteForMono((int) $application->mono_loan_calculation)) {
+                        $application->refresh();
+                    }
+                }
+            }
+
             return ResponseHelper::success($applications, 'BNPL applications retrieved successfully');
         } catch (Exception $e) {
             Log::error('BNPL Admin Index Error: ' . $e->getMessage());
@@ -91,9 +102,49 @@ class BNPLAdminController extends Controller
                 return ResponseHelper::error('BNPL application not found', 404);
             }
 
+            if ($application->mono_loan_calculation) {
+                app(InstallmentPaymentRecorder::class)
+                    ->syncOrderPaymentCompleteForMono((int) $application->mono_loan_calculation);
+                $application->refresh();
+            }
+
             $payload = $application->toArray();
             $payload['ordered_items'] = $this->resolveOrderedItemsFromSnapshot($application);
             $payload = $this->mergeLoanApplicationEstateFromLinkedAudit($application, $payload);
+
+            $hadCounterOffer = $application->counter_offer_min_deposit !== null
+                && $application->counter_offer_min_tenor !== null;
+            $payload['had_counter_offer'] = $hadCounterOffer;
+            $payload['counter_offer_details'] = null;
+            if ($hadCounterOffer) {
+                $snap = is_array($application->loan_plan_snapshot) ? $application->loan_plan_snapshot : [];
+                $payload['counter_offer_details'] = BnplLoanPlanCalculator::buildCounterOfferDetailsPayload(
+                    $snap,
+                    (float) $application->counter_offer_min_deposit,
+                    (int) $application->counter_offer_min_tenor,
+                    (float) ($application->mono->interest_rate ?? 4)
+                );
+            }
+
+            // Linked BNPL order created after customer pays down payment (payment tracking lives on the order).
+            $linkedOrder = null;
+            if ($application->mono_loan_calculation) {
+                $linkedOrder = Order::query()
+                    ->where('mono_calculation_id', $application->mono_loan_calculation)
+                    ->orderByDesc('id')
+                    ->first(['id', 'order_number', 'payment_status', 'order_status', 'total_price', 'created_at']);
+            }
+            $payload['linked_bnpl_order_id'] = $linkedOrder?->id;
+            $payload['linked_bnpl_order'] = $linkedOrder ? [
+                'id' => $linkedOrder->id,
+                'order_number' => $linkedOrder->order_number,
+                'payment_status' => $linkedOrder->payment_status,
+                'order_status' => $linkedOrder->order_status,
+                'total_price' => $linkedOrder->total_price !== null ? (float) $linkedOrder->total_price : null,
+                'created_at' => $linkedOrder->created_at?->format('Y-m-d H:i:s'),
+            ] : null;
+            $payload['down_payment_completed'] = $linkedOrder !== null
+                && in_array(strtolower((string) $linkedOrder->payment_status), ['paid', 'completed', 'success'], true);
 
             return ResponseHelper::success($payload, 'BNPL application retrieved successfully');
         } catch (Exception $e) {
@@ -475,23 +526,17 @@ class BNPLAdminController extends Controller
                                        $application->counter_offer_min_tenor !== null;
                 
                 if ($hasCounterOfferTerms) {
-                    $downPayment = (float) $application->counter_offer_min_deposit;
+                    $storedUpfront = (float) $application->counter_offer_min_deposit;
                     $duration = (int) $application->counter_offer_min_tenor;
                     $snap = is_array($application->loan_plan_snapshot) ? $application->loan_plan_snapshot : [];
-                    $bundle = BnplLoanPlanCalculator::bundlePriceFromSnapshot($snap);
-                    $feePcts = BnplLoanPlanCalculator::feePercentagesFromSnapshot($snap);
-                    $interestMonthly = BnplLoanPlanCalculator::interestMonthlyPercentFromSnapshot(
+                    $plan = BnplLoanPlanCalculator::resolveCounterOfferPlanFromStored(
                         $snap,
+                        $storedUpfront,
+                        $duration,
                         (float) ($mono->interest_rate ?? 4)
                     );
-                    if ($bundle > 0 && $downPayment > 0 && $duration > 0) {
-                        $plan = BnplLoanPlanCalculator::computeFromUpfrontTotal(
-                            $bundle,
-                            $downPayment,
-                            $duration,
-                            $interestMonthly,
-                            $feePcts
-                        );
+                    if ($plan !== null) {
+                        $downPayment = (float) $plan['upfront_deposit_total'];
                         $totalRepayment = (float) $plan['total_repayment_amount'];
                         $monthlyPayment = (float) $plan['monthly_repayment_amount'];
                         $principal = (float) $plan['base_loan_amount'];
@@ -502,6 +547,7 @@ class BNPLAdminController extends Controller
                         $mono->total_amount = round($totalRepayment + $downPayment, 2);
                         $mono->save();
 
+                        $application->counter_offer_min_deposit = $downPayment;
                         $application->loan_amount = $totalRepayment;
                         $application->repayment_duration = $duration;
                         $application->save();
@@ -783,6 +829,24 @@ class BNPLAdminController extends Controller
     }
 
     /**
+     * Format a date attribute that may be Carbon, DateTime, or a plain string.
+     */
+    private function formatInstallationDate(mixed $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if ($value instanceof \DateTimeInterface) {
+            return $value->format('Y-m-d');
+        }
+        try {
+            return \Carbon\Carbon::parse($value)->format('Y-m-d');
+        } catch (\Throwable $e) {
+            return is_string($value) ? $value : null;
+        }
+    }
+
+    /**
      * Accept the requested installation date.
      * PUT /api/admin/bnpl/applications/{id}/installation-date/accept
      */
@@ -797,24 +861,32 @@ class BNPLAdminController extends Controller
                 return ResponseHelper::error('No pending installation date to accept.', 422);
             }
             $application->installation_booking_status = 'accepted';
+            $application->installation_admin_proposed_date = null;
+            $application->installation_rejection_note = null;
             $application->save();
             return ResponseHelper::success([
-                'installation_requested_date' => $application->installation_requested_date->format('Y-m-d'),
+                'installation_requested_date' => $this->formatInstallationDate($application->installation_requested_date),
                 'installation_booking_status' => $application->installation_booking_status,
             ], 'Installation date accepted.');
         } catch (Exception $e) {
             Log::error('BNPL Admin Accept Installation Date Error: ' . $e->getMessage());
-            return ResponseHelper::error('Failed to accept installation date.', 500);
+            return ResponseHelper::error('Failed to accept installation date: ' . $e->getMessage(), 500);
         }
     }
 
     /**
-     * Reject the requested installation date. User will be able to book another date (excluding this one).
+     * Reject the requested installation date and send an alternate date + note to the customer.
      * PUT /api/admin/bnpl/applications/{id}/installation-date/reject
+     * Body: proposed_date (Y-m-d, required), note (optional)
      */
-    public function rejectInstallationDate($id)
+    public function rejectInstallationDate(Request $request, $id)
     {
         try {
+            $request->validate([
+                'proposed_date' => 'required|date|date_format:Y-m-d|after:today',
+                'note' => 'nullable|string|max:2000',
+            ]);
+
             $application = LoanApplication::with('user')->find($id);
             if (!$application) {
                 return ResponseHelper::error('BNPL application not found', 404);
@@ -822,18 +894,46 @@ class BNPLAdminController extends Controller
             if ($application->installation_booking_status !== 'pending' || !$application->installation_requested_date) {
                 return ResponseHelper::error('No pending installation date to reject.', 422);
             }
-            $rejectedDate = $application->installation_requested_date->format('Y-m-d');
+
+            $rejectedDate = $this->formatInstallationDate($application->installation_requested_date);
+            if (!$rejectedDate) {
+                return ResponseHelper::error('Invalid installation requested date on this application.', 422);
+            }
+
+            $proposedDate = \Carbon\Carbon::parse($request->proposed_date)->format('Y-m-d');
+            if ($proposedDate === $rejectedDate) {
+                return ResponseHelper::error('Proposed date must be different from the customer\'s requested date.', 422);
+            }
+            // Sundays not available (same rule as customer booking)
+            if (\Carbon\Carbon::parse($proposedDate)->dayOfWeek === \Carbon\Carbon::SUNDAY) {
+                return ResponseHelper::error('Sundays are not available for installation. Please choose another day.', 422);
+            }
+
             $rejected = $application->installation_rejected_dates ?? [];
-            if (!in_array($rejectedDate, $rejected)) {
+            if (! is_array($rejected)) {
+                $rejected = [];
+            }
+            if (! in_array($rejectedDate, $rejected, true)) {
                 $rejected[] = $rejectedDate;
             }
+            if (in_array($proposedDate, $rejected, true)) {
+                return ResponseHelper::error('That proposed date was previously rejected. Choose another date.', 422);
+            }
+
+            $note = trim((string) ($request->note ?? ''));
             $application->installation_booking_status = 'rejected';
             $application->installation_rejected_dates = $rejected;
+            $application->installation_admin_proposed_date = $proposedDate;
+            $application->installation_rejection_note = $note !== '' ? $note : null;
+            // Clear current request so customer can re-book (or accept the suggested date)
+            $application->installation_requested_date = null;
             $application->save();
 
             try {
                 if ($application->user && $application->user->email) {
-                    Mail::to($application->user->email)->send(new BNPLStatusEmail($application->user, $application, 'installation_date_rejected'));
+                    Mail::to($application->user->email)->send(
+                        new BNPLStatusEmail($application->user, $application, 'installation_date_rejected')
+                    );
                 }
             } catch (\Throwable $e) {
                 Log::warning('Could not send installation date rejected email: ' . $e->getMessage());
@@ -842,10 +942,15 @@ class BNPLAdminController extends Controller
             return ResponseHelper::success([
                 'installation_booking_status' => $application->installation_booking_status,
                 'installation_rejected_dates' => $application->installation_rejected_dates,
-            ], 'Installation date rejected. User has been notified to book another date.');
+                'installation_admin_proposed_date' => $this->formatInstallationDate($application->installation_admin_proposed_date),
+                'installation_rejection_note' => $application->installation_rejection_note,
+                'installation_requested_date' => null,
+            ], 'Installation date rejected. Customer has been notified with your suggested date.');
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e;
         } catch (Exception $e) {
             Log::error('BNPL Admin Reject Installation Date Error: ' . $e->getMessage());
-            return ResponseHelper::error('Failed to reject installation date.', 500);
+            return ResponseHelper::error('Failed to reject installation date: ' . $e->getMessage(), 500);
         }
     }
 }

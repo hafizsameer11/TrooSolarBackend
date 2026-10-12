@@ -22,7 +22,7 @@ class BNPLStatusEmail extends Mailable
 
     public User $user;
     public LoanApplication $application;
-    public string $status; // 'approved' | 'rejected' | 'counter_offer' | 'partner_offer'
+    public string $status; // 'approved' | 'rejected' | 'counter_offer' | 'partner_offer' | 'payment_complete'
     public string $continueUrl;
     public string $subjectLine;
     public string $headingText;
@@ -135,7 +135,27 @@ class BNPLStatusEmail extends Mailable
         } elseif ($status === 'installation_date_rejected') {
             $this->subjectLine = 'Installation date – please choose another date – Troosolar';
             $this->headingText = MailBrand::heading('Installation date could not be confirmed');
-            $this->bodyText = "Your requested installation date could not be confirmed. Please log in to your {$bnpl} loan page and book another date. Choose a date at least 72 hours from today; Sundays are not available.";
+            $proposed = $application->installation_admin_proposed_date;
+            $proposedStr = null;
+            if ($proposed instanceof \DateTimeInterface) {
+                $proposedStr = $proposed->format('Y-m-d');
+            } elseif (is_string($proposed) && $proposed !== '') {
+                $proposedStr = $proposed;
+            }
+            $note = trim((string) ($application->installation_rejection_note ?? ''));
+            $this->bodyText = "Your requested installation date could not be confirmed.";
+            if ($proposedStr) {
+                $this->bodyText .= " We suggest {$proposedStr} instead.";
+            }
+            if ($note !== '') {
+                $this->bodyText .= " Note from Troosolar: {$note}";
+            }
+            $this->bodyText .= " Please log in to your {$bnpl} loan page to accept the suggested date or book another date. Choose a date at least 72 hours from today; Sundays are not available.";
+        } elseif ($status === 'payment_complete') {
+            $this->subjectLine = "Payment complete – your {$bnpl} loan is fully paid – Troosolar";
+            $this->headingText = MailBrand::heading('Payment complete');
+            $this->bodyText = "Congratulations! You have finished making all payments on your {$bnpl} loan. Thank you for choosing Troosolar.";
+            $this->continueUrl = FrontendUrl::bnplApplicationTrack($application->id);
         } else {
             $this->subjectLine = "Update on your {$bnpl} application – Troosolar";
             $this->headingText = MailBrand::heading("Update on your {$bnpl} application");

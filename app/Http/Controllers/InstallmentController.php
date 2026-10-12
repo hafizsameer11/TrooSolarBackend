@@ -7,6 +7,7 @@ use App\Models\LoanInstallment;
 use App\Models\MonoLoanCalculation;
 use App\Models\Transaction;
 use App\Models\Wallet;
+use App\Services\InstallmentPaymentRecorder;
 // use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -283,6 +284,9 @@ $history = LoanInstallment::query()
             'transaction_id' => $transaction->id,
         ]);
 
+        app(InstallmentPaymentRecorder::class)
+            ->syncOrderPaymentCompleteForMono($inst->mono_calculation_id);
+
         $inst->load('transaction');
 
         return response()->json([
@@ -296,11 +300,15 @@ $history = LoanInstallment::query()
     /** Map installment for FE */
     private function mapInstallment(LoanInstallment $i): array
     {
+        $due = optional($i->payment_date)?->toDateString();
+
         return [
             'id'                  => $i->id,
             'mono_calculation_id' => $i->mono_calculation_id,
             'amount'              => (float) $i->amount,
-            'payment_date'        => optional($i->payment_date)?->toDateString(),
+            'installment_number'  => $i->installment_number,
+            'payment_date'        => $due,
+            'due_date'            => $due,
             'status'              => $i->status,
             'computed_status'     => $i->computed_status,
             'paid_at'             => optional($i->paid_at)?->toDateTimeString(),

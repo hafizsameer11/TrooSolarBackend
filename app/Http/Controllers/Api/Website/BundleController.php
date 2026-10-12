@@ -9,6 +9,7 @@ use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Laravel\Sanctum\PersonalAccessToken;
 
 class BundleController extends Controller
 {
@@ -143,18 +144,33 @@ class BundleController extends Controller
         try {
             $query = $request->query('q');
             $bundleType = $request->query('bundle_type');
+            // Only admins may request unavailable bundles (admin Bundle Mgt uses include_unavailable=1).
+            // This route is public (no auth middleware), so resolve Sanctum user from Bearer token.
             $includeUnavailable = $request->boolean('include_unavailable', false);
+            $authUser = $request->user();
+            if (! $authUser && $request->bearerToken()) {
+                $accessToken = PersonalAccessToken::findToken($request->bearerToken());
+                $authUser = $accessToken?->tokenable;
+            }
+            $isAdmin = strtolower((string) ($authUser->role ?? '')) === 'admin';
+            $allowUnavailable = $includeUnavailable && $isAdmin;
+
             $bundlesQuery = Bundles::with(['bundleItems.product', 'customServices', 'bundleMaterials.material.category'])
                 ->orderByDisplayProminence();
-            if (Schema::hasColumn('bundles', 'is_available')) {
-                if (!$includeUnavailable) {
-                    $bundlesQuery->where('is_available', true);
-                }
+            if (Schema::hasColumn('bundles', 'is_available') && ! $allowUnavailable) {
+                $bundlesQuery->where('is_available', true);
             }
             if (!empty($bundleType)) {
                 $bundlesQuery->where('bundle_type', $bundleType);
             }
-            $bundles = $bundlesQuery->get();
+            // Storefront catalog: hide empty / zero-price shells (admin Shop Mgt does the same).
+            // Admin "include unavailable" list keeps zero-price rows so they can be cleaned up.
+            if (! $allowUnavailable) {
+                $bundlesQuery->where('total_price', '>', 0)
+                    ->whereNotNull('title')
+                    ->where('title', '!=', '');
+            }
+            $bundles = $bundlesQuery->get()->unique('id')->values();
             $allBundles = $bundles->values();
 
             // When q is provided (target capacity in watts), find exact/closest capacity bundles.

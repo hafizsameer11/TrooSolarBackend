@@ -64,14 +64,18 @@ class LoanApplication extends Model
         'order_items_snapshot',
         'loan_plan_snapshot',
         'installation_requested_date',
-    'installation_booking_status',
-    'installation_rejected_dates',
-];
+        'installation_booking_status',
+        'installation_rejected_dates',
+        'installation_admin_proposed_date',
+        'installation_rejection_note',
+    ];
 
     protected $casts = [
         'order_items_snapshot' => 'array',
         'loan_plan_snapshot' => 'array',
         'installation_rejected_dates' => 'array',
+        'installation_requested_date' => 'date',
+        'installation_admin_proposed_date' => 'date',
         'mono_credit_report' => 'array',
         'partner_offer_documents' => 'array',
         'mono_can_afford' => 'boolean',
