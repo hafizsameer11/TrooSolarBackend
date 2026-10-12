@@ -1744,7 +1744,37 @@ class BNPLController extends Controller
                 'repayment_duration' => $loanApplication->repayment_duration,
                 'property_address' => $loanApplication->property_address,
                 'property_state' => $loanApplication->property_state,
+                'financing_path' => $loanApplication->financing_path ?: 'troosolar',
+                'credit_check_method' => $loanApplication->credit_check_method,
                 'loan_plan_snapshot' => $loanApplication->loan_plan_snapshot,
+                'admin_notes' => $loanApplication->admin_notes,
+                'partner_offer_interest_rate' => $loanApplication->partner_offer_interest_rate !== null
+                    ? (float) $loanApplication->partner_offer_interest_rate
+                    : null,
+                'partner_offer_deposit_percent' => $loanApplication->partner_offer_deposit_percent !== null
+                    ? (float) $loanApplication->partner_offer_deposit_percent
+                    : null,
+                'partner_offer_initial_deposit' => $loanApplication->partner_offer_initial_deposit !== null
+                    ? (float) $loanApplication->partner_offer_initial_deposit
+                    : null,
+                'partner_offer_admin_fees' => $loanApplication->partner_offer_admin_fees !== null
+                    ? (float) $loanApplication->partner_offer_admin_fees
+                    : null,
+                'partner_offer_repayment_amount' => $loanApplication->partner_offer_repayment_amount !== null
+                    ? (float) $loanApplication->partner_offer_repayment_amount
+                    : null,
+                'partner_offer_loan_amount' => $loanApplication->partner_offer_loan_amount !== null
+                    ? (float) $loanApplication->partner_offer_loan_amount
+                    : null,
+                'partner_offer_tenor' => $loanApplication->partner_offer_tenor !== null
+                    ? (int) $loanApplication->partner_offer_tenor
+                    : null,
+                'partner_offer_documents' => is_array($loanApplication->partner_offer_documents)
+                    ? $loanApplication->partner_offer_documents
+                    : [],
+                'partner_offer_writeup' => is_string($loanApplication->partner_offer_writeup ?? null)
+                    ? $loanApplication->partner_offer_writeup
+                    : null,
                 'guarantor' => $loanApplication->guarantor ? [
                     'id' => $loanApplication->guarantor->id,
                     'full_name' => $loanApplication->guarantor->full_name,
@@ -1756,6 +1786,40 @@ class BNPLController extends Controller
                 'installation_booking_status' => $loanApplication->installation_booking_status,
                 'installation_rejected_dates' => $loanApplication->installation_rejected_dates ?? [],
             ] : null;
+            // Keep partner offer visible on order view after down payment (status becomes approved).
+            $orderData['partner_offer'] = $loanApplication ? [
+                'interest_rate' => $loanApplication->partner_offer_interest_rate !== null
+                    ? (float) $loanApplication->partner_offer_interest_rate
+                    : null,
+                'deposit_percent' => $loanApplication->partner_offer_deposit_percent !== null
+                    ? (float) $loanApplication->partner_offer_deposit_percent
+                    : null,
+                'initial_deposit' => $loanApplication->partner_offer_initial_deposit !== null
+                    ? (float) $loanApplication->partner_offer_initial_deposit
+                    : null,
+                'admin_fees' => $loanApplication->partner_offer_admin_fees !== null
+                    ? (float) $loanApplication->partner_offer_admin_fees
+                    : null,
+                'repayment_amount' => $loanApplication->partner_offer_repayment_amount !== null
+                    ? (float) $loanApplication->partner_offer_repayment_amount
+                    : null,
+                'loan_amount' => $loanApplication->partner_offer_loan_amount !== null
+                    ? (float) $loanApplication->partner_offer_loan_amount
+                    : null,
+                'tenor' => $loanApplication->partner_offer_tenor !== null
+                    ? (int) $loanApplication->partner_offer_tenor
+                    : null,
+                'writeup' => is_string($loanApplication->partner_offer_writeup ?? null)
+                    ? trim($loanApplication->partner_offer_writeup)
+                    : null,
+                'documents' => is_array($loanApplication->partner_offer_documents)
+                    ? $loanApplication->partner_offer_documents
+                    : [],
+            ] : null;
+            $orderData['financing_path'] = $loanApplication
+                ? ($loanApplication->financing_path ?: 'troosolar')
+                : null;
+            $orderData['admin_notes'] = $loanApplication?->admin_notes;
             $orderData['loan_calculation'] = $loanApplication
                 ? $this->buildLoanCalculationForStatus($loanApplication)
                 : null;
