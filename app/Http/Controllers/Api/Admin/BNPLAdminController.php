@@ -109,6 +109,13 @@ class BNPLAdminController extends Controller
             }
 
             $payload = $application->toArray();
+            // Normalize installation dates to Y-m-d for admin date inputs / display.
+            $payload['installation_requested_date'] = $this->formatInstallationDate(
+                $application->installation_requested_date
+            );
+            $payload['installation_admin_proposed_date'] = $this->formatInstallationDate(
+                $application->installation_admin_proposed_date
+            );
             $payload['ordered_items'] = $this->resolveOrderedItemsFromSnapshot($application);
             $payload = $this->mergeLoanApplicationEstateFromLinkedAudit($application, $payload);
 

@@ -62,6 +62,7 @@ class BnplLoanPlanCalculator
 
     /**
      * Catalog bundle / product subtotal for insurance — same as LoanCalculator bundlePrice prop.
+     * Never returns the VAT-inclusive loan calculator total.
      *
      * @param  array<string, mixed>|null  $snap
      */
@@ -70,11 +71,25 @@ class BnplLoanPlanCalculator
         if (! is_array($snap) || $snap === []) {
             return 0.0;
         }
-        foreach (['bundlePrice', 'netAmount', 'amountExcludingVat', 'catalogSubtotal'] as $k) {
+        foreach (['bundlePrice', 'catalogSubtotal', 'netAmount', 'amountExcludingVat'] as $k) {
             $v = self::toFloat($snap[$k] ?? 0);
             if ($v > 0) {
                 return $v;
             }
+        }
+
+        // Older snapshots: reverse VAT from the VAT-inclusive calculator total.
+        $loanCalc = self::loanCalculatorTotalFromSnapshot($snap);
+        $vatAmt = self::toFloat($snap['vatAmount'] ?? 0);
+        if ($loanCalc > 0 && $vatAmt > 0 && $vatAmt < $loanCalc) {
+            return round($loanCalc - $vatAmt, 2);
+        }
+        $vatPct = self::toFloat($snap['vatPercent'] ?? 7.5);
+        if ($vatPct <= 0) {
+            $vatPct = 7.5;
+        }
+        if ($loanCalc > 0) {
+            return round($loanCalc / (1 + ($vatPct / 100.0)), 2);
         }
 
         return 0.0;
@@ -144,9 +159,13 @@ class BnplLoanPlanCalculator
         $m = $feePcts['management'] / 100;
         $l = $feePcts['legal'] / 100;
 
+        // Never use VAT-inclusive loan calculator total as insurance base.
         $insuranceBase = ($catalogBundlePrice !== null && $catalogBundlePrice > 0)
             ? $catalogBundlePrice
-            : $loanCalculatorTotal;
+            : 0.0;
+        if ($insuranceBase <= 0 && $loanCalculatorTotal > 0) {
+            $insuranceBase = round($loanCalculatorTotal / 1.075, 2);
+        }
 
         // Same as LoanCalculator.jsx: deposit on grandTotal; insurance on catalog bundle price
         $baseDeposit = $loanCalculatorTotal * ($depositPercentOfBundle / 100.0);
@@ -203,7 +222,10 @@ class BnplLoanPlanCalculator
         }
         $insuranceBase = ($catalogBundlePrice !== null && $catalogBundlePrice > 0)
             ? $catalogBundlePrice
-            : $loanCalculatorTotal;
+            : 0.0;
+        if ($insuranceBase <= 0 && $loanCalculatorTotal > 0) {
+            $insuranceBase = round($loanCalculatorTotal / 1.075, 2);
+        }
         // upfront = baseDeposit + insuranceBase*i + (loanCalcTotal - baseDeposit)*(m+l)
         $base = ($upfrontTotal - $insuranceBase * $i - $loanCalculatorTotal * ($m + $l)) / $denom;
 
@@ -288,6 +310,7 @@ class BnplLoanPlanCalculator
             return null;
         }
 
+        // Always invert / recompute with catalog-bundle insurance (never loan-calculator total).
         $catalogOrNull = $catalogBundle > 0 ? $catalogBundle : null;
         $pctCatalog = self::depositPercentFromUpfrontTotal(
             $loanCalcTotal,
@@ -295,28 +318,11 @@ class BnplLoanPlanCalculator
             $feePcts,
             $catalogOrNull
         );
-        // Legacy invert: insurance was wrongly applied on loan calculator total.
-        $pctLegacy = self::depositPercentFromUpfrontTotal(
-            $loanCalcTotal,
-            $storedUpfront,
-            $feePcts,
-            $loanCalcTotal
-        );
-
-        $score = static function (float $p): float {
-            if ($p <= 0) {
-                return PHP_FLOAT_MAX;
-            }
-
-            return abs($p - round($p));
-        };
-
-        $chosen = $score($pctLegacy) < $score($pctCatalog) ? $pctLegacy : $pctCatalog;
-        if ($chosen <= 0) {
+        if ($pctCatalog <= 0) {
             return null;
         }
         // Admin always enters whole deposit % (e.g. 30, 40, 50).
-        $depositPercent = round($chosen);
+        $depositPercent = round($pctCatalog);
 
         return self::computeFromDepositPercent(
             $loanCalcTotal,
