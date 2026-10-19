@@ -133,24 +133,33 @@ class BNPLStatusEmail extends Mailable
                 $this->repaymentDuration = $this->partnerOffer['tenor'];
             }
         } elseif ($status === 'installation_date_rejected') {
-            $this->subjectLine = 'Installation date – please choose another date – Troosolar';
-            $this->headingText = MailBrand::heading('Installation date could not be confirmed');
+            $this->subjectLine = 'Action Required: Choose a New Installation Date - Troosolar';
+            $this->headingText = MailBrand::heading('Action Required: Choose a New Installation Date');
+            // Do not surface general application admin_notes on this mail — only the installation note below.
+            $this->adminNotes = null;
             $proposed = $application->installation_admin_proposed_date;
             $proposedStr = null;
             if ($proposed instanceof \DateTimeInterface) {
                 $proposedStr = $proposed->format('Y-m-d');
             } elseif (is_string($proposed) && $proposed !== '') {
-                $proposedStr = $proposed;
+                try {
+                    $proposedStr = \Carbon\Carbon::parse($proposed)->format('Y-m-d');
+                } catch (Throwable $e) {
+                    $proposedStr = $proposed;
+                }
             }
             $note = trim((string) ($application->installation_rejection_note ?? ''));
-            $this->bodyText = "Your requested installation date could not be confirmed.";
+            $parts = [
+                'Your requested installation date could not be confirmed.',
+            ];
             if ($proposedStr) {
-                $this->bodyText .= " We suggest {$proposedStr} instead.";
+                $parts[] = "We suggest {$proposedStr} instead.";
             }
+            $parts[] = "Please log in to your {$bnpl} loan page to accept the suggested date or book another date.";
             if ($note !== '') {
-                $this->bodyText .= " Note from Troosolar: {$note}";
+                $parts[] = "Note: {$note}";
             }
-            $this->bodyText .= " Please log in to your {$bnpl} loan page to accept the suggested date or book another date. Choose a date at least 72 hours from today; Sundays are not available.";
+            $this->bodyText = implode("\n\n", $parts);
         } elseif ($status === 'payment_complete') {
             $this->subjectLine = "Payment complete – your {$bnpl} loan is fully paid – Troosolar";
             $this->headingText = MailBrand::heading('Payment complete');

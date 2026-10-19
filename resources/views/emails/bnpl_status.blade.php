@@ -26,15 +26,25 @@
 
         <p>Hello {{ trim($user->first_name . ' ' . $user->sur_name) }},</p>
 
-        <div class="message">
+        <div class="message" style="white-space: pre-line;">
             {{ $bodyText }}
         </div>
 
-        @if(!empty($adminNotes))
+        @if(!empty($adminNotes) && ($status ?? '') !== 'installation_date_rejected')
             <div class="details" style="border-left: 4px solid #273e8e;">
                 <p style="margin:0 0 6px 0;"><strong>Admin note</strong></p>
                 <p style="margin:0; white-space: pre-wrap;">{{ $adminNotes }}</p>
             </div>
+        @endif
+
+        @if(($status ?? '') === 'installation_date_rejected')
+            <p>
+                <a href="{{ $continueUrl }}" class="btn" target="_blank" rel="noopener noreferrer">Open BNPL loan page</a>
+            </p>
+            <p style="font-size: 14px; color: #666;">
+                Or copy this link into your browser:<br>
+                <a href="{{ $continueUrl }}" style="word-break: break-all; color: #273e8e;">{{ $continueUrl }}</a>
+            </p>
         @endif
 
         @if($status === 'approved')
