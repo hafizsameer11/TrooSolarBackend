@@ -555,7 +555,8 @@ class BNPLAdminController extends Controller
                         $mono->save();
 
                         $application->counter_offer_min_deposit = $downPayment;
-                        $application->loan_amount = $totalRepayment;
+                        // Store financed principal — not total repayment (principal + interest).
+                        $application->loan_amount = $principal;
                         $application->repayment_duration = $duration;
                         $application->save();
 
