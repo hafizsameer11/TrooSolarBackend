@@ -2207,6 +2207,63 @@ class OrderController extends Controller
     }
 
     /**
+     * PUT /api/admin/orders/bnpl/{id}/status
+     * Update BNPL order fulfillment status (Admin only).
+     * payment_status remains the down-payment flag; this updates order_status only.
+     */
+    public function updateBnplOrderStatus(Request $request, $id)
+    {
+        try {
+            $request->validate([
+                'order_status' => 'required|in:pending,processing,shipped,delivered,cancelled,refunded,completed',
+                'admin_notes' => 'nullable|string|max:1000',
+            ]);
+
+            $query = Order::query();
+            if (Schema::hasColumn('orders', 'order_type')) {
+                $query->where(function ($q) {
+                    $q->where('order_type', 'bnpl')
+                        ->orWhere(function ($subQ) {
+                            $subQ->whereNotNull('mono_calculation_id')
+                                ->where(function ($typeQ) {
+                                    $typeQ->whereNull('order_type')
+                                        ->orWhereNotIn('order_type', ['buy_now', 'audit_only']);
+                                });
+                        });
+                });
+            } else {
+                $query->whereNotNull('mono_calculation_id');
+            }
+
+            $order = $query->findOrFail($id);
+            $previousStatus = $order->order_status;
+            $order->order_status = $request->order_status;
+
+            if ($request->has('admin_notes') && Schema::hasColumn('orders', 'admin_notes')) {
+                $order->admin_notes = $request->admin_notes;
+            }
+
+            $order->save();
+            $this->notifyCustomerOrderStatusChange($order, $previousStatus);
+
+            return ResponseHelper::success($order, 'BNPL order status updated successfully');
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('BNPL Order Status Update Error: ' . $e->getMessage(), [
+                'order_id' => $id,
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return ResponseHelper::error('Failed to update BNPL order status: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
      * GET /api/admin/orders/bnpl
      * Get all BNPL orders (Admin only)
      */

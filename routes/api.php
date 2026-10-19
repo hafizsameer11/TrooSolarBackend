@@ -511,6 +511,7 @@ Route::post('bundles/{bundle}/update', [BundleController::class, 'update'])
         Route::put('/buy-now/{id}/status', [OrderController::class, 'updateBuyNowOrderStatus']);
         Route::get('/bnpl', [OrderController::class, 'getBnplOrders']);
         Route::get('/bnpl/{id}', [OrderController::class, 'getBnplOrder']);
+        Route::put('/bnpl/{id}/status', [OrderController::class, 'updateBnplOrderStatus']);
     });
 
     // ================= SITE BANNER ADMIN ROUTES =================
