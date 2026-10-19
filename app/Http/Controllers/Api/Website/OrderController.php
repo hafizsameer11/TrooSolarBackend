@@ -114,12 +114,162 @@ class OrderController extends Controller
     }
 
     /**
+     * BNPL orders store financing (deposit + all repayments) in total_price — never use that as invoice grand total.
+     * Prefer the customer's loan_plan_snapshot invoice figures (same as BNPL flow invoice).
+     *
+     * @return array<string, float|null>|null
+     */
+    private function resolveBnplInvoicePaymentBreakdown(Order $order, float $catalogItemsSubtotal): ?array
+    {
+        $isBnpl = strtolower((string) ($order->order_type ?? '')) === 'bnpl'
+            || ! empty($order->mono_calculation_id);
+        if (! $isBnpl) {
+            return null;
+        }
+
+        $order->loadMissing(['loanApplication', 'monoCalculation']);
+        $snap = is_array($order->loanApplication?->loan_plan_snapshot)
+            ? $order->loanApplication->loan_plan_snapshot
+            : [];
+
+        $toFloat = static function ($v): float {
+            if ($v === null || $v === '') {
+                return 0.0;
+            }
+            if (is_string($v)) {
+                $v = str_replace(',', '', $v);
+            }
+
+            return is_numeric($v) ? (float) $v : 0.0;
+        };
+
+        $settings = CheckoutSetting::get(CheckoutSetting::CHANNEL_BUY_NOW);
+        $vatPct = (float) ($settings->vat_percentage ?? config('checkout.vat_percentage', 7.5));
+        $insPct = (float) ($settings->insurance_fee_percentage ?? config('checkout.insurance_fee_percentage', 3));
+        if ($toFloat($snap['vatPercent'] ?? null) > 0) {
+            $vatPct = $toFloat($snap['vatPercent']);
+        }
+
+        $invoiceGrand = $toFloat(
+            $snap['invoiceGrandTotal']
+                ?? $snap['grandTotal']
+                ?? $snap['totalAmount']
+                ?? null
+        );
+        // Snapshot totalAmount can be invoiceGrand + BNPL admin fees — prefer explicit invoice/grand keys.
+        if ($toFloat($snap['invoiceGrandTotal'] ?? null) > 0) {
+            $invoiceGrand = $toFloat($snap['invoiceGrandTotal']);
+        } elseif ($toFloat($snap['grandTotal'] ?? null) > 0) {
+            $invoiceGrand = $toFloat($snap['grandTotal']);
+        }
+
+        $bundlePrice = $toFloat(
+            $snap['bundlePrice']
+                ?? $snap['catalogSubtotal']
+                ?? $snap['netAmount']
+                ?? $snap['amountExcludingVat']
+                ?? null
+        );
+        if ($bundlePrice <= 0 && $catalogItemsSubtotal > 0) {
+            $bundlePrice = $catalogItemsSubtotal;
+        }
+
+        $netAmount = $toFloat($snap['netAmount'] ?? $snap['amountExcludingVat'] ?? null);
+        $vatAmount = $toFloat($snap['vatAmount'] ?? null);
+
+        $delivery = (float) ($order->delivery_fee ?? 0);
+        $installation = (float) ($order->installation_price ?? 0);
+        $insurance = (float) ($order->insurance_fee ?? 0);
+        $material = Schema::hasColumn('orders', 'material_cost') ? (float) ($order->material_cost ?? 0) : 0.0;
+        $inspection = Schema::hasColumn('orders', 'inspection_fee') ? (float) ($order->inspection_fee ?? 0) : 0.0;
+
+        // Prefer snapshot fee rows when order fee columns were never populated for BNPL.
+        if ($delivery <= 0.005) {
+            $delivery = max($toFloat($snap['deliveryFee'] ?? null), $toFloat($snap['delivery_fee'] ?? null));
+        }
+        if ($installation <= 0.005) {
+            $installation = max($toFloat($snap['installationFee'] ?? null), $toFloat($snap['installation_fee'] ?? null));
+        }
+        if ($inspection <= 0.005) {
+            $inspection = max($toFloat($snap['inspectionFee'] ?? null), $toFloat($snap['inspection_fee'] ?? null));
+        }
+        if ($material <= 0.005) {
+            $material = max($toFloat($snap['materialCost'] ?? null), $toFloat($snap['material_cost'] ?? null));
+        }
+
+        if ($invoiceGrand > 0.005) {
+            if ($netAmount <= 0.005 && $vatPct > 0) {
+                $netAmount = round($invoiceGrand / (1 + ($vatPct / 100.0)), 2);
+            }
+            if ($vatAmount <= 0.005 && $invoiceGrand > $netAmount && $netAmount > 0) {
+                $vatAmount = round($invoiceGrand - $netAmount, 2);
+            }
+            if ($vatAmount <= 0.005 && $netAmount > 0) {
+                $vatAmount = (float) CheckoutPricing::vatAmount($netAmount, $vatPct);
+            }
+
+            $itemsSubtotal = $bundlePrice > 0.005 ? $bundlePrice : $netAmount;
+            $sumBeforeVat = $netAmount > 0.005
+                ? $netAmount
+                : round($itemsSubtotal + $delivery + $installation + $material + $inspection, 2);
+
+            return [
+                'catalog_items_subtotal' => round($itemsSubtotal, 2),
+                'outright_discount_amount' => 0.0,
+                'outright_discount_percentage' => null,
+                'items_subtotal_after_discount' => round($itemsSubtotal, 2),
+                'delivery_fee' => $delivery,
+                'installation_fee' => $installation,
+                'insurance_fee' => $insurance,
+                'material_cost' => $material,
+                'inspection_fee' => $inspection,
+                'fees_total' => round($delivery + $installation + $insurance + $material + $inspection, 2),
+                'sum_before_vat' => round($sumBeforeVat, 2),
+                'vat_amount' => round($vatAmount, 2),
+                'vat_percentage' => $vatPct,
+                'insurance_fee_percentage' => $insPct,
+                // System invoice total — never financing (deposit + repayments).
+                'grand_total' => round($invoiceGrand, 2),
+            ];
+        }
+
+        // No snapshot invoice: compute catalog + fees + VAT. Do not use order.total_price.
+        $itemsAfter = $bundlePrice > 0.005 ? $bundlePrice : $catalogItemsSubtotal;
+        $sumBeforeVat = round($itemsAfter + $delivery + $installation + $material + $inspection, 2);
+        $vatAmount = (float) CheckoutPricing::vatAmount($sumBeforeVat, $vatPct);
+        $grandTotal = round($sumBeforeVat + $vatAmount + $insurance, 2);
+
+        return [
+            'catalog_items_subtotal' => round($itemsAfter, 2),
+            'outright_discount_amount' => 0.0,
+            'outright_discount_percentage' => null,
+            'items_subtotal_after_discount' => round($itemsAfter, 2),
+            'delivery_fee' => $delivery,
+            'installation_fee' => $installation,
+            'insurance_fee' => $insurance,
+            'material_cost' => $material,
+            'inspection_fee' => $inspection,
+            'fees_total' => round($delivery + $installation + $insurance + $material + $inspection, 2),
+            'sum_before_vat' => $sumBeforeVat,
+            'vat_amount' => round($vatAmount, 2),
+            'vat_percentage' => $vatPct,
+            'insurance_fee_percentage' => $insPct,
+            'grand_total' => $grandTotal,
+        ];
+    }
+
+    /**
      * Resolve catalog subtotal, discount, fees, VAT, and grand total for order receipts / admin invoice.
      *
      * @return array<string, float|null>
      */
     private function resolveOrderPaymentBreakdown(Order $order, float $catalogItemsSubtotal): array
     {
+        $bnplBreakdown = $this->resolveBnplInvoicePaymentBreakdown($order, $catalogItemsSubtotal);
+        if ($bnplBreakdown !== null) {
+            return $bnplBreakdown;
+        }
+
         $orderType = strtolower((string) ($order->order_type ?? ''));
         $settings = CheckoutSetting::get(
             $orderType === 'shop'
@@ -4035,6 +4185,53 @@ class OrderController extends Controller
                 $installationRequested = $order->installation_requested_date instanceof \Carbon\CarbonInterface
                     ? $order->installation_requested_date->format('Y-m-d')
                     : (string) $order->installation_requested_date;
+            }
+
+            // BNPL: append service fee rows so admin invoice matches customer BNPL invoice table.
+            $isBnplOrder = strtolower((string) ($order->order_type ?? '')) === 'bnpl'
+                || ! empty($order->mono_calculation_id);
+            if ($isBnplOrder) {
+                $existingDescs = collect($productLineItems)
+                    ->map(fn ($r) => strtolower(trim((string) ($r['description'] ?? ''))))
+                    ->filter()
+                    ->all();
+                $appendFeeRow = static function (array &$rows, array $existing, string $label, float $amount) {
+                    if ($amount <= 0.005) {
+                        return;
+                    }
+                    $needle = strtolower($label);
+                    foreach ($existing as $desc) {
+                        if ($desc !== '' && (str_contains($desc, $needle) || str_contains($needle, $desc))) {
+                            return;
+                        }
+                    }
+                    $rows[] = [
+                        'description' => $label,
+                        'quantity' => 1,
+                        'unit' => 'Nos',
+                        'rate' => round($amount, 2),
+                        'total_cost' => round($amount, 2),
+                        'type' => 'fee',
+                    ];
+                };
+                $appendFeeRow(
+                    $productLineItems,
+                    $existingDescs,
+                    'Inspection fees',
+                    (float) ($paymentBreakdown['inspection_fee'] ?? 0)
+                );
+                $appendFeeRow(
+                    $productLineItems,
+                    $existingDescs,
+                    'Delivery Fees',
+                    (float) ($paymentBreakdown['delivery_fee'] ?? 0)
+                );
+                $appendFeeRow(
+                    $productLineItems,
+                    $existingDescs,
+                    'Installation fees',
+                    (float) ($paymentBreakdown['installation_fee'] ?? 0)
+                );
             }
 
             return ResponseHelper::success([
