@@ -602,26 +602,44 @@ class MonoService
         $data = is_array($payload) ? ($payload['data'] ?? null) : null;
         $detail = is_string($data) && $data !== '' ? $data : null;
 
+        // Surface field-level validation messages (Mono often returns only "Validation error").
+        $validationBits = [];
+        if (is_array($data)) {
+            $errors = $data['errors'] ?? $data;
+            if (is_array($errors)) {
+                foreach ($errors as $key => $value) {
+                    if (is_array($value)) {
+                        $validationBits[] = (is_string($key) ? $key.': ' : '').implode(', ', array_map('strval', $value));
+                    } elseif (is_string($value) && $value !== '') {
+                        $validationBits[] = (is_string($key) && ! is_int($key) ? $key.': ' : '').$value;
+                    }
+                }
+            }
+        }
+
         $text = is_string($message) ? $message : 'Unknown Mono API error';
+        if ($validationBits !== []) {
+            $text = $text.' — '.implode('; ', array_slice($validationBits, 0, 6));
+        }
 
         if ($detail && stripos($detail, 'wallet balance') !== false) {
             return 'Mono wallet balance is too low to run this API call. Top up your Mono wallet in the Mono Dashboard (Billing / Wallet), then retry. Credit worthiness costs about ₦500 per check with bureau lookup, or ₦200 without (MONO_RUN_CREDIT_CHECK=false).';
         }
 
-        if ($detail) {
-            $text = $text . ' — ' . $detail;
+        if ($detail && $validationBits === []) {
+            $text = $text.' — '.$detail;
         }
 
         if ($status === 401 || stripos($text, 'unauthorized') !== false) {
             if (str_contains($path, 'creditworthiness')) {
-                return 'Mono Credit Worthiness failed: ' . $text
-                    . '. If the detail mentions wallet balance, top up your Mono dashboard wallet. Otherwise confirm Credit Worthiness is enabled and webhook is set to https://api.troosolar.com/api/webhooks/mono';
+                return 'Mono Credit Worthiness failed: '.$text
+                    .'. If the detail mentions wallet balance, top up your Mono dashboard wallet. Otherwise confirm Credit Worthiness is enabled and webhook is set to https://api.troosolar.com/api/webhooks/mono';
             }
 
-            return 'Mono API unauthorized: ' . $text
-                . '. Verify MONO_SECRET_KEY matches MONO_PUBLIC_KEY on the server .env (live_sk + live_pk, no quotes), then run /api/optimize-app.';
+            return 'Mono API unauthorized: '.$text
+                .'. Verify MONO_SECRET_KEY matches MONO_PUBLIC_KEY on the server .env (live_sk + live_pk, no quotes), then run /api/optimize-app.';
         }
 
-        return 'Mono API error: ' . $text;
+        return 'Mono API error: '.$text;
     }
 }

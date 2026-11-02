@@ -56,13 +56,27 @@ class MonoDirectDebitController extends Controller
                 return ResponseHelper::error('Unauthorized loan access.', 403);
             }
 
+            $loanAppForGate = null;
             if (! empty($data['loan_application_id'])) {
-                $app = LoanApplication::where('id', $data['loan_application_id'])
+                $loanAppForGate = LoanApplication::where('id', $data['loan_application_id'])
                     ->where('user_id', Auth::id())
                     ->first();
-                if (! $app) {
+                if (! $loanAppForGate) {
                     return ResponseHelper::error('Loan application not found.', 404);
                 }
+            } else {
+                $loanAppForGate = LoanApplication::where('user_id', Auth::id())
+                    ->where('mono_loan_calculation', $mono->id)
+                    ->orderByDesc('id')
+                    ->first();
+            }
+
+            $creditMethod = strtolower((string) ($loanAppForGate?->credit_check_method ?? ''));
+            if ($creditMethod !== 'manual') {
+                return ResponseHelper::error(
+                    'Automatic bank repayments (Mono Direct Debit) are only available for Manual review credit checks.',
+                    422
+                );
             }
 
             $user = User::query()->findOrFail(Auth::id());
@@ -102,6 +116,17 @@ class MonoDirectDebitController extends Controller
             $installment = LoanInstallment::where('id', $installmentId)
                 ->where('user_id', Auth::id())
                 ->firstOrFail();
+
+            $loanApp = LoanApplication::where('user_id', Auth::id())
+                ->where('mono_loan_calculation', $installment->mono_calculation_id)
+                ->orderByDesc('id')
+                ->first();
+            if (strtolower((string) ($loanApp?->credit_check_method ?? '')) !== 'manual') {
+                return ResponseHelper::error(
+                    'Mono Direct Debit repayments are only available for Manual review credit checks.',
+                    422
+                );
+            }
 
             $debitTx = $this->directDebitService->collectInstallment($installment);
 

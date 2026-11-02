@@ -31,6 +31,7 @@ use App\Services\MonoService;
 use App\Services\MonoDirectDebitService;
 use App\Models\MonoCreditCheckSession;
 use App\Models\UserMonoAccount;
+use App\Models\Transaction;
 use App\Models\Partner;
 use App\Support\BnplFinanceAgreement;
 use App\Support\FrontendUrl;
@@ -138,6 +139,21 @@ class BNPLController extends Controller
             }
             if (($priorIdRaw !== null && $priorIdRaw !== '') && ! $priorApp) {
                 return ResponseHelper::error('Invalid prior application for re-apply.', 422);
+            }
+            $feeStatus = $this->resolveCreditCheckFeeRequirement((int) Auth::id(), $priorApp?->id);
+            if (! empty($feeStatus['required'])) {
+                $feeRef = trim((string) $request->input('credit_check_fee_reference', ''));
+                if ($feeRef === '') {
+                    return ResponseHelper::error('Credit check fee payment is required before submitting this application.', 422);
+                }
+                $paidFee = Transaction::where('user_id', Auth::id())
+                    ->where('type', 'bnpl_credit_check_fee')
+                    ->where('status', 'Completed')
+                    ->where('reference', $feeRef)
+                    ->first();
+                if (! $paidFee) {
+                    return ResponseHelper::error('Credit check fee payment was not found or not verified. Please complete payment and try again.', 422);
+                }
             }
             $canReusePriorDocs = $priorApp !== null
                 && ! empty($priorApp->bank_statement_path)
@@ -502,9 +518,39 @@ class BNPLController extends Controller
                 $upfrontWithFees = $planSnapshot
                     ? (float) ($planSnapshot['depositAmount'] ?? 0)
                     : 0.0;
-                $bundlePlusFeesTotal = $planSnapshot
-                    ? (float) ($planSnapshot['totalAmount'] ?? 0)
-                    : 0.0;
+                // Prefer Loan Summary plan: financing total = upfront + total repayment (principal + interest).
+                // Never use snapshot totalAmount alone — after Review it can be invoice + admin fees or deposit+principal.
+                $resolvedPlan = is_array($planSnapshot)
+                    ? BnplLoanPlanCalculator::resolveApprovedCustomerPlanFromSnapshot(
+                        $planSnapshot,
+                        $repaymentDuration > 0 ? $repaymentDuration : null,
+                        (float) ($settings->interest_rate_percentage ?? 4)
+                    )
+                    : null;
+                if ($resolvedPlan !== null) {
+                    $principalFinanced = (float) $resolvedPlan['base_loan_amount'] ?: $principalFinanced;
+                    $upfrontWithFees = (float) $resolvedPlan['upfront_deposit_total'] ?: $upfrontWithFees;
+                    $repaymentDuration = (int) ($resolvedPlan['tenor_months'] ?? $repaymentDuration) ?: $repaymentDuration;
+                }
+                $totalRepayment = $resolvedPlan !== null
+                    ? (float) $resolvedPlan['total_repayment_amount']
+                    : (float) ($planSnapshot['totalRepaymentAmount'] ?? $planSnapshot['totalRepayment'] ?? 0);
+                if ($totalRepayment <= 0 && $principalFinanced > 0 && $repaymentDuration > 0) {
+                    $rate = (float) ($planSnapshot['interestRate'] ?? $planSnapshot['interest_rate'] ?? $settings->interest_rate_percentage ?? 0);
+                    $totalRepayment = round(
+                        $principalFinanced + ($principalFinanced * ($rate / 100) * $repaymentDuration),
+                        2
+                    );
+                }
+                $financingTotal = $totalRepayment > 0
+                    ? round($totalRepayment + $upfrontWithFees, 2)
+                    : round($principalFinanced + $upfrontWithFees, 2);
+                $monthlyFromPlan = $resolvedPlan !== null
+                    ? (float) $resolvedPlan['monthly_repayment_amount']
+                    : (float) ($planSnapshot['monthlyRepaymentAmount'] ?? $planSnapshot['monthlyRepayment'] ?? 0);
+                if ($monthlyFromPlan <= 0 && $totalRepayment > 0 && $repaymentDuration > 0) {
+                    $monthlyFromPlan = round($totalRepayment / $repaymentDuration, 2);
+                }
 
                 // Check if MonoLoanCalculation exists for this LoanCalculation
                 $monoLoanCalculation = MonoLoanCalculation::where('loan_calculation_id', $loanCalculation->id)->first();
@@ -516,7 +562,7 @@ class BNPLController extends Controller
                             'loan_amount' => $principalFinanced,
                             'repayment_duration' => $repaymentDuration,
                             'down_payment' => $upfrontWithFees,
-                            'total_amount' => $bundlePlusFeesTotal > 0 ? $bundlePlusFeesTotal : ($principalFinanced + $upfrontWithFees),
+                            'total_amount' => $financingTotal,
                             'status' => 'pending',
                             'interest_rate' => $planSnapshot['interestRate'] ?? $planSnapshot['interest_rate'] ?? $settings->interest_rate_percentage,
                             'management_fee_percentage' => $settings->management_fee_percentage,
@@ -540,7 +586,7 @@ class BNPLController extends Controller
                 } elseif ($planSnapshot && $principalFinanced > 0 && $upfrontWithFees > 0) {
                     $monoLoanCalculation->loan_amount = $principalFinanced;
                     $monoLoanCalculation->down_payment = $upfrontWithFees;
-                    $monoLoanCalculation->total_amount = $bundlePlusFeesTotal > 0 ? $bundlePlusFeesTotal : ($principalFinanced + $upfrontWithFees);
+                    $monoLoanCalculation->total_amount = $financingTotal;
                     $monoLoanCalculation->repayment_duration = $repaymentDuration;
                     if (isset($planSnapshot['interestRate']) || isset($planSnapshot['interest_rate'])) {
                         $monoLoanCalculation->interest_rate = $planSnapshot['interestRate'] ?? $planSnapshot['interest_rate'];
@@ -550,6 +596,14 @@ class BNPLController extends Controller
 
                 $monoLoanCalculationId = $monoLoanCalculation->id;
 
+                // Persist interest-inclusive monthly on LoanCalculation (installment scheduler reads this).
+                if ($monthlyFromPlan > 0) {
+                    $loanCalculation->monthly_payment = $monthlyFromPlan;
+                    $loanCalculation->loan_amount = $principalFinanced > 0 ? $principalFinanced : $loanCalculation->loan_amount;
+                    $loanCalculation->repayment_duration = $repaymentDuration > 0
+                        ? $repaymentDuration
+                        : $loanCalculation->repayment_duration;
+                }
                 // Update loan calculation status
                 $loanCalculation->status = 'submitted';
                 $loanCalculation->save();
@@ -1443,6 +1497,57 @@ class BNPLController extends Controller
                     $application->loan_amount = $partnerRepay;
                 }
                 $application->save();
+            } elseif (in_array($status, ['approved', 'counter_offer_accepted'], true)) {
+                // Outright approval (and counter-offer accept): sync mono from Loan Summary math
+                // so monthly installments include interest — not principal÷tenor.
+                $snap = is_array($application->loan_plan_snapshot) ? $application->loan_plan_snapshot : [];
+                $hasCounterOfferTerms = $application->counter_offer_min_deposit !== null
+                    && $application->counter_offer_min_tenor !== null;
+                $plan = null;
+                if ($hasCounterOfferTerms || $status === 'counter_offer_accepted') {
+                    $plan = BnplLoanPlanCalculator::resolveCounterOfferPlanFromStored(
+                        $snap,
+                        (float) ($application->counter_offer_min_deposit ?? $mono->down_payment ?? 0),
+                        (int) ($application->counter_offer_min_tenor ?? $mono->repayment_duration ?? 0),
+                        (float) ($mono->interest_rate ?? 4)
+                    );
+                }
+                if ($plan === null) {
+                    $plan = BnplLoanPlanCalculator::resolveApprovedCustomerPlanFromSnapshot(
+                        $snap,
+                        (int) ($mono->repayment_duration ?? $application->repayment_duration ?? 0) ?: null,
+                        (float) ($mono->interest_rate ?? 4)
+                    );
+                }
+                if ($plan !== null) {
+                    $principal = (float) $plan['base_loan_amount'];
+                    $upfront = (float) $plan['upfront_deposit_total'];
+                    $totalRepay = (float) $plan['total_repayment_amount'];
+                    $tenor = (int) ($plan['tenor_months'] ?? $mono->repayment_duration ?? 0);
+                    if ($tenor <= 0) {
+                        $tenor = (int) ($application->repayment_duration ?? $snap['tenor'] ?? 0);
+                    }
+                    $monthlyPayment = (float) $plan['monthly_repayment_amount'];
+                    if ($monthlyPayment <= 0 && $tenor > 0 && $totalRepay > 0) {
+                        $monthlyPayment = round($totalRepay / $tenor, 2);
+                    }
+
+                    $mono->loan_amount = $principal;
+                    $mono->down_payment = $upfront;
+                    $mono->repayment_duration = $tenor > 0 ? $tenor : $mono->repayment_duration;
+                    $mono->total_amount = round($totalRepay + $upfront, 2);
+                    if (! empty($plan['interest_rate'])) {
+                        $mono->interest_rate = (float) $plan['interest_rate'];
+                    }
+                    $mono->save();
+
+                    // Keep application.loan_amount as financed principal (not total repayment).
+                    $application->loan_amount = $principal;
+                    if ($tenor > 0) {
+                        $application->repayment_duration = $tenor;
+                    }
+                    $application->save();
+                }
             }
 
             // Check if order already created for this application (idempotent)
@@ -1464,9 +1569,27 @@ class BNPLController extends Controller
             $calc = $mono->loanCalculation;
             if ($calc) {
                 $duration = (int) $mono->repayment_duration;
-                $totalAmount = (float) $mono->total_amount;
-                $downPayment = (float) $mono->down_payment;
-                $monthlyPayment = $duration > 0 ? round(($totalAmount - $downPayment) / $duration, 2) : 0;
+                $principal = (float) $mono->loan_amount;
+                $interestRate = (float) ($mono->interest_rate ?? 0);
+                // Interest-inclusive monthly (Loan Summary) — never (total_amount − down_payment) when that
+                // wrongly equals principal only because total_amount omitted interest.
+                $interestTotal = $duration > 0 && $principal > 0 && $interestRate > 0
+                    ? round($principal * ($interestRate / 100) * $duration, 2)
+                    : 0.0;
+                $totalRepay = round($principal + $interestTotal, 2);
+                $monthlyPayment = $duration > 0 && $totalRepay > 0
+                    ? round($totalRepay / $duration, 2)
+                    : 0.0;
+                if ($monthlyPayment <= 0 && $duration > 0) {
+                    $downPayment = (float) $mono->down_payment;
+                    $monthlyPayment = round(((float) $mono->total_amount - $downPayment) / $duration, 2);
+                }
+                // Keep financing total = upfront + total repayment (with interest).
+                if ($totalRepay > 0) {
+                    $mono->total_amount = round($totalRepay + (float) $mono->down_payment, 2);
+                    $mono->save();
+                }
+                $calc->loan_amount = $principal > 0 ? $principal : $calc->loan_amount;
                 $calc->repayment_duration = $duration;
                 $calc->monthly_payment = $monthlyPayment;
                 $calc->repayment_date = $calc->repayment_date ?? now()->addMonth();
@@ -1654,6 +1777,24 @@ class BNPLController extends Controller
 
             if (!$order) {
                 return ResponseHelper::error('BNPL order not found', 404);
+            }
+
+            if ($order->mono_calculation_id) {
+                try {
+                    \App\Services\LoanInstallmentScheduler::syncInterestInclusiveSchedule(
+                        (int) $order->mono_calculation_id
+                    );
+                    $order->refresh();
+                    $order->load([
+                        'monoCalculation.loanInstallments.transaction',
+                        'monoCalculation.loanRepayments',
+                        'monoCalculation.loanCalculation',
+                    ]);
+                } catch (\Throwable $e) {
+                    Log::warning('BNPL customer installment repair skipped: '.$e->getMessage(), [
+                        'order_id' => $order->id,
+                    ]);
+                }
             }
 
             // Get loan application linked to this order
@@ -1940,6 +2081,17 @@ class BNPLController extends Controller
 
             if (!$application->mono_loan_calculation || !$application->mono) {
                 return ResponseHelper::error('Loan calculation not found for this application', 404);
+            }
+
+            try {
+                \App\Services\LoanInstallmentScheduler::syncInterestInclusiveSchedule(
+                    (int) $application->mono_loan_calculation
+                );
+                $application->load(['mono.loanInstallments.transaction']);
+            } catch (\Throwable $e) {
+                Log::warning('BNPL repayment schedule repair skipped: '.$e->getMessage(), [
+                    'application_id' => $application->id,
+                ]);
             }
 
             $installments = $application->mono->loanInstallments()
@@ -2381,6 +2533,198 @@ class BNPLController extends Controller
         }
     }
 
+    private const CREDIT_CHECK_FEE_WINDOW_DAYS = 90;
+
+    private function currentLinkedMonoAccountId(?int $userId = null): ?string
+    {
+        $linked = UserMonoAccount::where('user_id', $userId ?? Auth::id())
+            ->where('status', 'linked')
+            ->first();
+        $id = $linked?->mono_account_id;
+
+        return ($id !== null && $id !== '') ? (string) $id : null;
+    }
+
+    private function recordCreditCheckFeePayment(
+        int $userId,
+        float $amount,
+        string $method,
+        string $reference,
+        ?string $monoAccountId = null
+    ): Transaction {
+        $existing = Transaction::where('user_id', $userId)
+            ->where('type', 'bnpl_credit_check_fee')
+            ->where('reference', $reference)
+            ->where('status', 'Completed')
+            ->first();
+        if ($existing) {
+            return $existing;
+        }
+
+        return Transaction::create([
+            'title' => 'BNPL credit check fee',
+            'amount' => $amount,
+            'status' => 'Completed',
+            'type' => 'bnpl_credit_check_fee',
+            'method' => $method,
+            'transacted_at' => now(),
+            'user_id' => $userId,
+            'tx_id' => $monoAccountId ? ('mono_acc:'.$monoAccountId) : null,
+            'reference' => $reference,
+        ]);
+    }
+
+    /**
+     * One-time credit check fee within a rolling window, unless bank account changed
+     * or counter-offer re-apply (prior_application_id) waives it.
+     */
+    private function resolveCreditCheckFeeRequirement(int $userId, ?int $priorApplicationId = null): array
+    {
+        $settings = BnplSettings::first() ?? BnplSettings::get();
+        $fee = (float) ($settings->credit_check_fee ?? 1000);
+        $linkedMono = $this->currentLinkedMonoAccountId($userId);
+        $windowDays = self::CREDIT_CHECK_FEE_WINDOW_DAYS;
+        $windowStart = now()->subDays($windowDays);
+
+        $base = [
+            'fee' => $fee,
+            'window_days' => $windowDays,
+            'linked_mono_account_id' => $linkedMono,
+            'paid_at' => null,
+            'paid_reference' => null,
+            'previous_mono_account_id' => null,
+        ];
+
+        if ($priorApplicationId) {
+            $prior = LoanApplication::where('id', $priorApplicationId)->where('user_id', $userId)->first();
+            if ($prior) {
+                return array_merge($base, [
+                    'required' => false,
+                    'waived' => true,
+                    'reason' => 'prior_application',
+                ]);
+            }
+        }
+
+        $bankChanged = static function (?string $previousMono, ?string $currentMono): bool {
+            return $previousMono !== null
+                && $previousMono !== ''
+                && $currentMono !== null
+                && $currentMono !== ''
+                && $previousMono !== $currentMono;
+        };
+
+        $recentFee = Transaction::where('user_id', $userId)
+            ->where('type', 'bnpl_credit_check_fee')
+            ->where('status', 'Completed')
+            ->where('transacted_at', '>=', $windowStart)
+            ->orderByDesc('transacted_at')
+            ->first();
+
+        if ($recentFee) {
+            $paidMono = null;
+            if (is_string($recentFee->tx_id) && str_starts_with($recentFee->tx_id, 'mono_acc:')) {
+                $paidMono = substr($recentFee->tx_id, strlen('mono_acc:')) ?: null;
+            }
+            if (! $bankChanged($paidMono, $linkedMono)) {
+                return array_merge($base, [
+                    'required' => false,
+                    'waived' => true,
+                    'reason' => 'recent_fee_payment',
+                    'paid_at' => optional($recentFee->transacted_at)->toIso8601String(),
+                    'paid_reference' => $recentFee->reference,
+                    'previous_mono_account_id' => $paidMono,
+                ]);
+            }
+            $base['previous_mono_account_id'] = $paidMono;
+            $base['reason_detail'] = 'linked_bank_changed';
+        }
+
+        // Legacy: an application in-window implies the fee was already collected client-side.
+        $recentApp = LoanApplication::where('user_id', $userId)
+            ->where('created_at', '>=', $windowStart)
+            ->orderByDesc('created_at')
+            ->first();
+
+        if ($recentApp) {
+            $appMono = $recentApp->mono_account_id ? (string) $recentApp->mono_account_id : null;
+            if (! $bankChanged($appMono, $linkedMono)) {
+                return array_merge($base, [
+                    'required' => false,
+                    'waived' => true,
+                    'reason' => 'recent_application',
+                    'paid_at' => optional($recentApp->created_at)->toIso8601String(),
+                    'previous_mono_account_id' => $appMono,
+                ]);
+            }
+            $base['previous_mono_account_id'] = $appMono;
+            $base['reason_detail'] = 'linked_bank_changed';
+        }
+
+        return array_merge($base, [
+            'required' => true,
+            'waived' => false,
+            'reason' => $base['reason_detail'] ?? null,
+        ]);
+    }
+
+    /**
+     * GET /api/bnpl/credit-check-fee/status
+     */
+    public function creditCheckFeeStatus(Request $request)
+    {
+        try {
+            $priorId = $request->query('prior_application_id');
+            $prior = ($priorId !== null && $priorId !== '') ? (int) $priorId : null;
+            $status = $this->resolveCreditCheckFeeRequirement((int) Auth::id(), $prior > 0 ? $prior : null);
+
+            return ResponseHelper::success($status, $status['waived'] ? 'Credit check fee waived' : 'Credit check fee required');
+        } catch (Exception $e) {
+            Log::error('BNPL credit check fee status error: '.$e->getMessage());
+
+            return ResponseHelper::error('Failed to resolve credit check fee status', 500);
+        }
+    }
+
+    /**
+     * POST /api/bnpl/credit-check-fee/confirm
+     * Record a successful Flutterwave (or other) credit-check fee payment.
+     */
+    public function confirmCreditCheckFee(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'reference' => 'required|string|max:191',
+                'method' => 'nullable|string|in:flutterwave,mono,card,bank',
+                'amount' => 'nullable|numeric|min:0',
+            ]);
+
+            $settings = BnplSettings::first();
+            $fee = (float) ($settings->credit_check_fee ?? 1000);
+            $amount = isset($data['amount']) ? (float) $data['amount'] : $fee;
+            $method = (string) ($data['method'] ?? 'flutterwave');
+            $monoAccountId = $this->currentLinkedMonoAccountId((int) Auth::id());
+
+            $tx = $this->recordCreditCheckFeePayment(
+                (int) Auth::id(),
+                $amount > 0 ? $amount : $fee,
+                $method,
+                (string) $data['reference'],
+                $monoAccountId
+            );
+
+            return ResponseHelper::success([
+                'paid' => true,
+                'reference' => $tx->reference,
+                'amount' => (float) $tx->amount,
+            ], 'Credit check fee recorded');
+        } catch (Exception $e) {
+            Log::error('BNPL credit check fee confirm error: '.$e->getMessage());
+
+            return ResponseHelper::error('Failed to confirm credit check fee: '.$e->getMessage(), 500);
+        }
+    }
+
     /**
      * POST /api/bnpl/credit-check-fee/mono/initiate
      * Start Mono DirectPay for the BNPL credit check fee (linked account required).
@@ -2478,9 +2822,24 @@ class BNPLController extends Controller
 
             $paid = in_array($status, ['successful', 'success', 'completed', 'paid'], true);
 
+            if ($paid) {
+                $settings = BnplSettings::first();
+                $fee = (float) ($settings->credit_check_fee ?? 1000);
+                $amountKobo = (int) ($payload['amount'] ?? 0);
+                $amount = $amountKobo > 0 ? round($amountKobo / 100, 2) : $fee;
+                $this->recordCreditCheckFeePayment(
+                    (int) Auth::id(),
+                    $amount,
+                    'mono',
+                    $reference,
+                    $this->currentLinkedMonoAccountId((int) Auth::id())
+                );
+            }
+
             return ResponseHelper::success([
                 'paid' => $paid,
                 'status' => $status ?: null,
+                'reference' => $reference,
             ], $paid ? 'Payment verified' : 'Payment not completed yet');
         } catch (Exception $e) {
             Log::error('BNPL credit check fee Mono verify error: ' . $e->getMessage());

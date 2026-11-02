@@ -10,6 +10,42 @@ use Illuminate\Support\Facades\DB;
 class LoanInstallmentScheduler
 {
     /**
+     * Sync mono financing total (upfront + principal + interest) and repair pending
+     * installment rows that were generated as principal÷tenor only.
+     */
+    public static function syncInterestInclusiveSchedule(int $monoCalcId): void
+    {
+        $mono = MonoLoanCalculation::with('loanCalculation')->find($monoCalcId);
+        if (! $mono) {
+            return;
+        }
+
+        $principal = (float) ($mono->loan_amount ?? 0);
+        $rate = (float) ($mono->interest_rate ?? 0);
+        $duration = (int) ($mono->repayment_duration ?? $mono->loanCalculation?->repayment_duration ?? 0);
+        $down = (float) ($mono->down_payment ?? 0);
+        if ($principal > 0.005 && $rate > 0.005 && $duration > 0) {
+            $totalRepay = round($principal + round($principal * ($rate / 100) * $duration, 2), 2);
+            $financingTotal = round($totalRepay + $down, 2);
+            if (abs((float) $mono->total_amount - $financingTotal) > 1.0) {
+                $mono->total_amount = $financingTotal;
+                $mono->save();
+            }
+            $order = \App\Models\Order::where('mono_calculation_id', $monoCalcId)
+                ->where(function ($q) {
+                    $q->where('order_type', 'bnpl')->orWhereNull('order_type');
+                })
+                ->first();
+            if ($order && abs((float) $order->total_price - $financingTotal) > 1.0) {
+                $order->total_price = $financingTotal;
+                $order->save();
+            }
+        }
+
+        self::generate($monoCalcId, null, false);
+    }
+
+    /**
      * Generate equal monthly installments for a MonoLoanCalculation.
      *
      * @param  int             $monoCalcId                 MonoLoanCalculation primary key
@@ -29,6 +65,29 @@ class LoanInstallmentScheduler
         // Fallback to calc->repayment_duration if mono doesn't have it
         $duration   = (int) ($mono->repayment_duration ?? $calc->repayment_duration);
         $perMonth   = (float) $calc->monthly_payment;
+
+        // Safety: LoanCalculation historically stored principal÷tenor (no interest).
+        // Monthly must be (principal + interest×tenor) / tenor — same as Loan Summary.
+        $principal = (float) ($mono->loan_amount ?? $calc->loan_amount ?? 0);
+        $interestRate = (float) ($mono->interest_rate ?? 0);
+        if ($duration > 0 && $principal > 0.005 && $interestRate > 0.005) {
+            $interestInclusiveMonthly = round(
+                ($principal + round($principal * ($interestRate / 100) * $duration, 2)) / $duration,
+                2
+            );
+            $principalOnlyMonthly = round($principal / $duration, 2);
+            if (
+                $interestInclusiveMonthly > 0.005
+                && (
+                    $perMonth <= 0.005
+                    || abs($perMonth - $principalOnlyMonthly) < 1.0
+                )
+            ) {
+                $perMonth = $interestInclusiveMonthly;
+                $calc->monthly_payment = $perMonth;
+                $calc->save();
+            }
+        }
 
         if ($duration <= 0) {
             throw new \InvalidArgumentException('repayment_duration must be > 0');
@@ -53,12 +112,20 @@ class LoanInstallmentScheduler
                     ->where('status', 'pending')
                     ->delete();
             } else {
-                $exists = LoanInstallment::where('mono_calculation_id', $monoCalcId)->exists();
-                if ($exists) {
-                    return [
-                        'created' => 0,
-                        'total_amount' => number_format($perMonth * $duration, 2, '.', ''),
-                    ];
+                $existing = LoanInstallment::where('mono_calculation_id', $monoCalcId)->get();
+                if ($existing->isNotEmpty()) {
+                    // Repair principal-only schedules that were generated before interest was included.
+                    $pendingOnly = $existing->every(fn ($row) => strtolower((string) $row->status) === 'pending');
+                    $existingSum = round((float) $existing->sum('amount'), 2);
+                    $expectedSum = round($perMonth * $duration, 2);
+                    if ($pendingOnly && $expectedSum > 0 && abs($existingSum - $expectedSum) > 1.0) {
+                        LoanInstallment::where('mono_calculation_id', $monoCalcId)->delete();
+                    } else {
+                        return [
+                            'created' => 0,
+                            'total_amount' => number_format($existingSum > 0 ? $existingSum : $expectedSum, 2, '.', ''),
+                        ];
+                    }
                 }
             }
 

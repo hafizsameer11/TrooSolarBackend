@@ -289,6 +289,91 @@ class BnplLoanPlanCalculator
     }
 
     /**
+     * Resolve the customer's chosen loan plan (outright approval — no counter-offer).
+     * Same math as Loan Summary: monthly = (principal + interest×tenor) / tenor.
+     *
+     * @param  array<string, mixed>|null  $snap  loan_plan_snapshot
+     * @return array<string, float>|null
+     */
+    public static function resolveApprovedCustomerPlanFromSnapshot(
+        ?array $snap,
+        ?int $tenorOverride = null,
+        float $interestMonthlyFallback = 4.0
+    ): ?array {
+        if (! is_array($snap) || $snap === []) {
+            return null;
+        }
+
+        $loanCalcTotal = self::loanCalculatorTotalFromSnapshot($snap);
+        $catalogBundle = self::catalogBundlePriceFromSnapshot($snap);
+        $feePcts = self::feePercentagesFromSnapshot($snap);
+        $interestMonthly = self::interestMonthlyPercentFromSnapshot($snap, $interestMonthlyFallback);
+        $tenor = $tenorOverride !== null && $tenorOverride > 0
+            ? $tenorOverride
+            : (int) ($snap['tenor'] ?? $snap['repayment_duration'] ?? 0);
+        $depositPercent = self::toFloat($snap['depositPercent'] ?? 0);
+
+        if ($loanCalcTotal > 0.005 && $depositPercent > 0.005 && $tenor > 0) {
+            $plan = self::computeFromDepositPercent(
+                $loanCalcTotal,
+                $depositPercent,
+                $tenor,
+                $interestMonthly,
+                $feePcts,
+                $catalogBundle > 0 ? $catalogBundle : null
+            );
+            $plan['tenor_months'] = (float) $tenor;
+            $plan['interest_rate'] = $interestMonthly;
+
+            return $plan;
+        }
+
+        // Fallback: trust LoanCalculator / Review figures already on the snapshot.
+        $principal = self::toFloat($snap['principal'] ?? $snap['totalLoanAmount'] ?? 0);
+        $upfront = self::toFloat($snap['depositAmount'] ?? 0);
+        $totalRepay = self::toFloat($snap['totalRepaymentAmount'] ?? $snap['totalRepayment'] ?? 0);
+        $monthly = self::toFloat($snap['monthlyRepaymentAmount'] ?? $snap['monthlyRepayment'] ?? 0);
+        $interestAmt = self::toFloat($snap['totalInterestAmount'] ?? $snap['totalInterest'] ?? 0);
+        if ($principal <= 0.005 || $tenor <= 0) {
+            return null;
+        }
+        if ($totalRepay <= 0.005 && $interestAmt > 0.005) {
+            $totalRepay = round($principal + $interestAmt, 2);
+        }
+        if ($totalRepay <= 0.005) {
+            $interestAmt = round($principal * ($interestMonthly / 100) * $tenor, 2);
+            $totalRepay = round($principal + $interestAmt, 2);
+        } elseif ($interestAmt <= 0.005) {
+            $interestAmt = round(max($totalRepay - $principal, 0), 2);
+        }
+        if ($monthly <= 0.005) {
+            $monthly = round($totalRepay / $tenor, 2);
+        }
+        if ($upfront <= 0.005) {
+            $upfront = self::toFloat($snap['upfrontDue'] ?? $snap['upfront_deposit_total'] ?? 0);
+        }
+
+        return [
+            'bundle_price' => round($loanCalcTotal > 0 ? $loanCalcTotal : ($principal + self::toFloat($snap['baseDepositAmount'] ?? 0)), 2),
+            'catalog_bundle_price' => round($catalogBundle, 2),
+            'deposit_percent' => $depositPercent,
+            'base_deposit' => self::toFloat($snap['baseDepositAmount'] ?? 0),
+            'base_loan_amount' => round($principal, 2),
+            'insurance_fee' => self::toFloat($snap['insuranceFee'] ?? 0),
+            'management_fee' => self::toFloat($snap['managementFee'] ?? 0),
+            'legal_fee' => self::toFloat($snap['legalFee'] ?? 0),
+            'admin_fees_total' => self::toFloat($snap['adminFeesTotal'] ?? $snap['totalAdministrativeFees'] ?? 0),
+            'upfront_deposit_total' => round($upfront, 2),
+            'total_loan_amount' => round($principal, 2),
+            'total_interest_amount' => round($interestAmt, 2),
+            'total_repayment_amount' => round($totalRepay, 2),
+            'monthly_repayment_amount' => round($monthly, 2),
+            'tenor_months' => (float) $tenor,
+            'interest_rate' => $interestMonthly,
+        ];
+    }
+
+    /**
      * Resolve counter-offer plan from stored ₦ upfront + tenor.
      * Admin enters whole deposit %; older rows may have inflated insurance (1% of calculator total).
      * Prefer the invert that lands closest to a whole percent, then recompute with catalog-bundle insurance.

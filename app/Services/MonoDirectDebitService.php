@@ -117,9 +117,10 @@ class MonoDirectDebitService
         $startDate = now()->startOfDay();
         $endDate = now()->addMonths($duration)->startOfDay();
 
-        $reference = 'troosolar_mandate_' . $user->id . '_' . $mono->id . '_' . time();
+        // Mono rejects references longer than 24 characters (returns generic "Validation error").
+        $reference = substr('tm'.$user->id.'m'.$mono->id.'r'.substr((string) time(), -6), 0, 24);
         $redirectPath = $loanApplicationId
-            ? '/bnpl-loans/app-' . $loanApplicationId . '?mandate=1'
+            ? '/bnpl-loans/app-'.$loanApplicationId.'?mandate=1'
             : '/bnpl-loans?mandate=1';
 
         $payload = $this->buildMandateInitiatePayload(

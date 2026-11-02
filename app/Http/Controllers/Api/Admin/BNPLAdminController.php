@@ -357,18 +357,17 @@ class BNPLAdminController extends Controller
                 ? (float) $request->insurance_fee_percentage
                 : (float) ($mono->insurance_fee_percentage ?? $settings->insurance_fee_percentage);
 
-            $totalAmount = $loanAmount + $downPayment;
+            // Same as Loan Summary: interest = principal × rate% × tenor; admin fees are upfront only.
             $totalLoanAmount = $loanAmount;
-            $totalInterestAmount = round($totalLoanAmount * ($interestRate / 100), 2);
-            $feePercent = $mgmtFee + $legalFee + $insFee;
-            $totalFeeAmount = round($totalLoanAmount * ($feePercent / 100), 2);
-            $totalRepaymentAmount = $totalLoanAmount + $totalInterestAmount + $totalFeeAmount;
+            $totalInterestAmount = round($totalLoanAmount * ($interestRate / 100) * max($duration, 0), 2);
+            $totalRepaymentAmount = round($totalLoanAmount + $totalInterestAmount, 2);
             $monthlyPayment = $duration > 0 ? round($totalRepaymentAmount / $duration, 2) : 0;
+            $financingTotal = round($downPayment + $totalRepaymentAmount, 2);
 
             $mono->loan_amount = $loanAmount;
             $mono->down_payment = $downPayment;
             $mono->repayment_duration = $duration;
-            $mono->total_amount = $totalAmount;
+            $mono->total_amount = $financingTotal;
             $mono->interest_rate = $interestRate;
             $mono->management_fee_percentage = $mgmtFee;
             $mono->legal_fee_percentage = $legalFee;
@@ -526,47 +525,75 @@ class BNPLAdminController extends Controller
                 }
             }
 
-            // When approving, sync counter offer terms to mono if they exist
+            // When approving, sync mono + LoanCalculation monthly from Loan Summary math.
+            // Counter-offer uses stored min deposit/tenor; outright approval uses customer snapshot.
             if ($request->status === 'approved' && $application->mono) {
                 $mono = $application->mono;
-                $hasCounterOfferTerms = $application->counter_offer_min_deposit !== null && 
+                $snap = is_array($application->loan_plan_snapshot) ? $application->loan_plan_snapshot : [];
+                $hasCounterOfferTerms = $application->counter_offer_min_deposit !== null &&
                                        $application->counter_offer_min_tenor !== null;
-                
+
+                $plan = null;
+                $duration = (int) ($mono->repayment_duration ?? $application->repayment_duration ?? 0);
                 if ($hasCounterOfferTerms) {
                     $storedUpfront = (float) $application->counter_offer_min_deposit;
                     $duration = (int) $application->counter_offer_min_tenor;
-                    $snap = is_array($application->loan_plan_snapshot) ? $application->loan_plan_snapshot : [];
                     $plan = BnplLoanPlanCalculator::resolveCounterOfferPlanFromStored(
                         $snap,
                         $storedUpfront,
                         $duration,
                         (float) ($mono->interest_rate ?? 4)
                     );
-                    if ($plan !== null) {
-                        $downPayment = (float) $plan['upfront_deposit_total'];
-                        $totalRepayment = (float) $plan['total_repayment_amount'];
-                        $monthlyPayment = (float) $plan['monthly_repayment_amount'];
-                        $principal = (float) $plan['base_loan_amount'];
+                }
+                if ($plan === null) {
+                    $plan = BnplLoanPlanCalculator::resolveApprovedCustomerPlanFromSnapshot(
+                        $snap,
+                        $duration > 0 ? $duration : null,
+                        (float) ($mono->interest_rate ?? 4)
+                    );
+                    if ($plan !== null && ! empty($plan['tenor_months'])) {
+                        $duration = (int) $plan['tenor_months'];
+                    }
+                }
 
-                        $mono->loan_amount = $principal;
-                        $mono->down_payment = $downPayment;
+                if ($plan !== null) {
+                    $downPayment = (float) $plan['upfront_deposit_total'];
+                    $totalRepayment = (float) $plan['total_repayment_amount'];
+                    $monthlyPayment = (float) $plan['monthly_repayment_amount'];
+                    $principal = (float) $plan['base_loan_amount'];
+                    if ($monthlyPayment <= 0 && $duration > 0 && $totalRepayment > 0) {
+                        $monthlyPayment = round($totalRepayment / $duration, 2);
+                    }
+
+                    $mono->loan_amount = $principal;
+                    $mono->down_payment = $downPayment;
+                    if ($duration > 0) {
                         $mono->repayment_duration = $duration;
-                        $mono->total_amount = round($totalRepayment + $downPayment, 2);
-                        $mono->save();
+                    }
+                    $mono->total_amount = round($totalRepayment + $downPayment, 2);
+                    if (! empty($plan['interest_rate'])) {
+                        $mono->interest_rate = (float) $plan['interest_rate'];
+                    }
+                    $mono->save();
 
+                    if ($hasCounterOfferTerms) {
                         $application->counter_offer_min_deposit = $downPayment;
-                        // Store financed principal — not total repayment (principal + interest).
-                        $application->loan_amount = $principal;
+                    }
+                    // Store financed principal — not total repayment (principal + interest).
+                    $application->loan_amount = $principal;
+                    if ($duration > 0) {
                         $application->repayment_duration = $duration;
-                        $application->save();
+                    }
+                    $application->save();
 
-                        if ($mono->loanCalculation) {
-                            $mono->loanCalculation->loan_amount = $principal;
-                            $mono->loanCalculation->repayment_duration = $duration;
-                            $mono->loanCalculation->monthly_payment = $monthlyPayment;
-                            $mono->loanCalculation->repayment_date = $mono->loanCalculation->repayment_date ?? now()->addMonth();
-                            $mono->loanCalculation->save();
-                        }
+                    if ($mono->loanCalculation) {
+                        $mono->loanCalculation->loan_amount = $principal;
+                        $mono->loanCalculation->repayment_duration = $duration > 0
+                            ? $duration
+                            : $mono->loanCalculation->repayment_duration;
+                        $mono->loanCalculation->monthly_payment = $monthlyPayment;
+                        $mono->loanCalculation->repayment_date = $mono->loanCalculation->repayment_date ?? now()->addMonth();
+                        $mono->loanCalculation->save();
                     }
                 }
             }

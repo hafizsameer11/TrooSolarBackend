@@ -263,6 +263,8 @@ Route::post('bundles/{bundle}/update', [BundleController::class, 'update'])
     Route::get('/bnpl/applications', [BNPLController::class, 'getApplications']); // List all user's BNPL applications
     Route::post('/bnpl/apply', [BNPLController::class, 'apply']);
     Route::post('/bnpl/process-credit-check', [BNPLController::class, 'processCreditCheck']);
+    Route::get('/bnpl/credit-check-fee/status', [BNPLController::class, 'creditCheckFeeStatus']);
+    Route::post('/bnpl/credit-check-fee/confirm', [BNPLController::class, 'confirmCreditCheckFee']);
     Route::post('/bnpl/credit-check-fee/mono/initiate', [BNPLController::class, 'initiateCreditCheckFeeMonoPay']);
     Route::post('/bnpl/credit-check-fee/mono/verify', [BNPLController::class, 'verifyCreditCheckFeeMonoPay']);
     Route::get('/bnpl/mandate/status/{mono_calculation_id}', [\App\Http\Controllers\Api\Website\MonoDirectDebitController::class, 'status']);
