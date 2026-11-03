@@ -446,11 +446,7 @@ class MonoDirectDebitService
      */
     private function buildDirectDebitCustomerCreatePayload(User $user, string $address, string $phone, string $bvn): array
     {
-        if ($bvn === '') {
-            throw new RuntimeException(
-                'BVN is required for Mono automatic repayments. Add your BVN to your profile, then try again.'
-            );
-        }
+        $bvn = $this->requireValidBvn($this->normalizeBvn($bvn));
 
         return [
             'email' => (string) ($user->email ?? ''),
@@ -462,11 +458,6 @@ class MonoDirectDebitService
         ];
     }
 
-    /**
-     * Mono PATCH /v2/customers/{id} — update payload (email is not allowed).
-     *
-     * @return array<string, mixed>
-     */
     private function buildDirectDebitCustomerUpdatePayload(User $user, string $address, string $phone, string $bvn): array
     {
         $payload = [
@@ -476,8 +467,10 @@ class MonoDirectDebitService
             'phone' => $phone,
         ];
 
-        if ($bvn !== '') {
-            $payload['identity'] = ['type' => 'bvn', 'number' => $bvn];
+        $normalizedBvn = $this->normalizeBvn($bvn);
+        // Only send identity when BVN is valid — Mono rejects non-11-digit numbers.
+        if (strlen($normalizedBvn) === 11) {
+            $payload['identity'] = ['type' => 'bvn', 'number' => $normalizedBvn];
         }
 
         return $payload;
@@ -631,23 +624,62 @@ class MonoDirectDebitService
         );
     }
 
+    private function normalizeBvn(?string $raw): string
+    {
+        return preg_replace('/\D+/', '', (string) $raw) ?: '';
+    }
+
+    /**
+     * Mono requires identity.number (BVN) to be exactly 11 digits.
+     */
+    private function requireValidBvn(string $bvn): string
+    {
+        if ($bvn === '') {
+            throw new RuntimeException(
+                'BVN is required for Mono automatic repayments. Add your 11-digit BVN to your profile, then try again.'
+            );
+        }
+
+        if (strlen($bvn) !== 11) {
+            throw new RuntimeException(
+                'Your BVN must be exactly 11 digits for Mono automatic repayments (currently '
+                .strlen($bvn)
+                .' digit(s)). Update your BVN in your profile or BNPL application, then try again.'
+            );
+        }
+
+        return $bvn;
+    }
+
     private function resolveCustomerBvn(User $user, ?int $loanApplicationId = null): string
     {
-        $bvn = preg_replace('/\s+/', '', trim((string) ($user->bvn ?? '')));
-        if ($bvn !== '') {
-            return $bvn;
-        }
+        $candidates = [];
+        $candidates[] = $this->normalizeBvn($user->bvn ?? '');
 
         if ($loanApplicationId) {
             $application = LoanApplication::query()
                 ->where('id', $loanApplicationId)
                 ->where('user_id', $user->id)
-                ->first(['loan_plan_snapshot']);
+                ->first(['bvn', 'loan_plan_snapshot']);
 
-            $snapshot = is_array($application?->loan_plan_snapshot) ? $application->loan_plan_snapshot : [];
-            $snapshotBvn = preg_replace('/\s+/', '', trim((string) ($snapshot['bvn'] ?? '')));
-            if ($snapshotBvn !== '') {
-                return $snapshotBvn;
+            if ($application) {
+                $candidates[] = $this->normalizeBvn($application->bvn ?? '');
+                $snapshot = is_array($application->loan_plan_snapshot) ? $application->loan_plan_snapshot : [];
+                $candidates[] = $this->normalizeBvn($snapshot['bvn'] ?? '');
+                $personal = is_array($snapshot['personal_details'] ?? null) ? $snapshot['personal_details'] : [];
+                $candidates[] = $this->normalizeBvn($personal['bvn'] ?? '');
+            }
+        }
+
+        foreach ($candidates as $bvn) {
+            if ($bvn !== '' && strlen($bvn) === 11) {
+                return $bvn;
+            }
+        }
+
+        foreach ($candidates as $bvn) {
+            if ($bvn !== '') {
+                return $this->requireValidBvn($bvn);
             }
         }
 
