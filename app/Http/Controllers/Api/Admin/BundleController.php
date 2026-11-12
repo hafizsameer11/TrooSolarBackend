@@ -348,7 +348,10 @@ public function index(Request $request)
             $this->syncBundleGalleryImages($bundle, $request);
 
             DB::commit();
-            $relations = ['bundleItems.product.category', 'customServices', 'bundleMaterials.material.category', 'brand', 'images'];
+            $relations = ['bundleItems.product.category', 'customServices', 'bundleMaterials.material.category', 'brand'];
+            if (Schema::hasTable('bundle_images')) {
+                $relations[] = 'images';
+            }
             if (Schema::hasTable('bundle_custom_appliances')) {
                 $relations[] = 'customAppliances';
             }
@@ -544,7 +547,10 @@ public function index(Request $request)
             }
 
             DB::commit();
-            $updateRelations = ['bundleItems.product.category', 'customServices', 'bundleMaterials.material.category', 'brand', 'images'];
+            $updateRelations = ['bundleItems.product.category', 'customServices', 'bundleMaterials.material.category', 'brand'];
+            if (Schema::hasTable('bundle_images')) {
+                $updateRelations[] = 'images';
+            }
             if (Schema::hasTable('bundle_custom_appliances')) {
                 $updateRelations[] = 'customAppliances';
             }
