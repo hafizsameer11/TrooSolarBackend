@@ -105,8 +105,7 @@ class ProductController extends Controller
             $product->update($data);
 
             $product->details()->delete();
-            $this->deleteGalleryImages($product);
-
+            $this->removeSelectedGalleryImages($product, $request);
             $this->handleImages($product, $request);
             $this->saveDetails($product, $request->product_details ?? []);
 
@@ -168,8 +167,15 @@ class ProductController extends Controller
     {
         $data = $request->validated();
 
+        if ($request->boolean('remove_featured_image') && $product) {
+            $this->deleteImage($product->featured_image);
+            $data['featured_image'] = null;
+        }
+
         if ($request->hasFile('featured_image')) {
-            if ($product) $this->deleteImage($product->featured_image);
+            if ($product) {
+                $this->deleteImage($product->featured_image);
+            }
             $data['featured_image'] = $this->uploadImage($request->file('featured_image'), 'products');
         }
 
@@ -178,25 +184,41 @@ class ProductController extends Controller
 
     private function uploadImage($file, $folder)
     {
-        $name = Str::uuid() . '.' . $file->getClientOriginalExtension();
-        return Storage::url($file->storeAs("public/{$folder}", $name));
+        return \App\Support\PublicMedia::store($file, $folder);
     }
 
     private function deleteImage($url)
     {
-        if ($url) {
-            $path = str_replace('/storage/', 'public/', $url);
-            if (Storage::exists($path)) Storage::delete($path);
-        }
+        \App\Support\PublicMedia::delete($url);
     }
 
     private function handleImages($product, $request)
     {
         if ($request->hasFile('images')) {
             foreach ($request->file('images') as $file) {
+                if (! $file) {
+                    continue;
+                }
                 $path = $this->uploadImage($file, 'products/gallery');
                 $product->images()->create(['image' => $path]);
             }
+        }
+    }
+
+    private function removeSelectedGalleryImages($product, $request)
+    {
+        $ids = $request->input('remove_image_ids', []);
+        if (! is_array($ids) || count($ids) === 0) {
+            return;
+        }
+        $ids = array_values(array_filter(array_map('intval', $ids)));
+        if (count($ids) === 0) {
+            return;
+        }
+        $product->loadMissing('images');
+        foreach ($product->images->whereIn('id', $ids) as $img) {
+            $this->deleteImage($img->image);
+            $img->delete();
         }
     }
 
@@ -205,6 +227,49 @@ class ProductController extends Controller
         foreach ($product->images as $img) {
             $this->deleteImage($img->image);
             $img->delete();
+        }
+    }
+
+    public function destroyFeaturedImage($id)
+    {
+        try {
+            $product = Product::find($id);
+            if (! $product) {
+                return ResponseHelper::error('Product not found.', 404);
+            }
+            $this->deleteImage($product->featured_image);
+            $product->featured_image = null;
+            $product->save();
+
+            return ResponseHelper::success(
+                $product->refresh()->load(['details', 'images']),
+                'Featured image removed.'
+            );
+        } catch (Exception $e) {
+            return ResponseHelper::error('Failed to remove featured image.', 500, $e->getMessage());
+        }
+    }
+
+    public function destroyGalleryImage($productId, $imageId)
+    {
+        try {
+            $product = Product::find($productId);
+            if (! $product) {
+                return ResponseHelper::error('Product not found.', 404);
+            }
+            $image = $product->images()->where('id', $imageId)->first();
+            if (! $image) {
+                return ResponseHelper::error('Image not found.', 404);
+            }
+            $this->deleteImage($image->image);
+            $image->delete();
+
+            return ResponseHelper::success(
+                $product->refresh()->load(['details', 'images']),
+                'Gallery image removed.'
+            );
+        } catch (Exception $e) {
+            return ResponseHelper::error('Failed to remove gallery image.', 500, $e->getMessage());
         }
     }
 

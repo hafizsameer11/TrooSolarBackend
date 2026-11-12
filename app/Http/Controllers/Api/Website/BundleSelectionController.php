@@ -93,6 +93,7 @@ class BundleSelectionController extends Controller
                 'bundleItems.product.category',
                 'bundleMaterials.material.category',
                 'customServices',
+                'images',
             ])->when(Schema::hasColumn('bundles', 'is_available'), function ($q) {
                 $q->where('is_available', true);
             })->find($id);
@@ -208,6 +209,13 @@ class BundleSelectionController extends Controller
                 'specifications' => $bundle->specifications ?? null,
                 'featured_image' => $bundle->featured_image ?? null,
                 'featured_image_url' => $bundle->featured_image_url ?? null,
+                'images' => ($bundle->images ?? collect())->map(function ($img) {
+                    return [
+                        'id' => $img->id,
+                        'image' => $img->image,
+                        'image_url' => $img->image_url,
+                    ];
+                })->values(),
                 'fees' => [
                     'installation_fee' => $installationFee,
                     'delivery_fee' => $deliveryFee,

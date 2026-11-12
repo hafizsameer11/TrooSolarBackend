@@ -71,13 +71,14 @@ class Bundles extends Model
         return $this->hasMany(BundleCustomAppliance::class, 'bundle_id');
     }
 
+    public function images()
+    {
+        return $this->hasMany(BundleImage::class, 'bundle_id');
+    }
+
     public function getFeaturedImageUrlAttribute(): ?string
     {
-        if (!$this->featured_image) return null;
-        if (Str::startsWith($this->featured_image, ['http://','https://','/storage/'])) {
-            return $this->featured_image;
-        }
-        return Storage::url($this->featured_image);
+        return \App\Support\PublicMedia::toPublicUrl($this->featured_image);
     }
 
     public function scopeOrderByDisplayProminence(Builder $query): Builder

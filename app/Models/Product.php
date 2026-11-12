@@ -6,8 +6,6 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Schema;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str; // ✅ use this
 
 class Product extends Model
 {
@@ -85,11 +83,7 @@ class Product extends Model
     }
     public function getFeaturedImageUrlAttribute(): ?string
     {
-        if (!$this->featured_image) return null;
-        if (Str::startsWith($this->featured_image, ['http://', 'https://', '/storage/'])) {
-            return $this->featured_image;
-        }
-        return Storage::url($this->featured_image);
+        return \App\Support\PublicMedia::toPublicUrl($this->featured_image);
     }
 
     /**

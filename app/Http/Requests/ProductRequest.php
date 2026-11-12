@@ -28,9 +28,12 @@ class ProductRequest extends FormRequest
             'is_available' => 'boolean',
             'description' => 'nullable|string',
             'specifications' => 'nullable|string',
-            'featured_image' => 'nullable|image|mimes:jpg,jpeg,png',
+            'featured_image' => 'nullable|image|mimes:jpg,jpeg,png,webp',
             'images' => 'nullable|array',
             'images.*' => 'image|mimes:jpg,jpeg,png,webp',
+            'remove_featured_image' => 'nullable|boolean',
+            'remove_image_ids' => 'nullable|array',
+            'remove_image_ids.*' => 'integer',
             'product_details' => 'nullable|array',
             'product_details.*' => 'required|string',
         ];

@@ -182,12 +182,16 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('products', ProductController::class);
     Route::post('products/{product}/update', [ProductController::class, 'update'])
      ->name('products.update.post');
-
+    Route::delete('products/{product}/featured-image', [ProductController::class, 'destroyFeaturedImage']);
+    Route::delete('products/{product}/images/{image}', [ProductController::class, 'destroyGalleryImage']);
+    
     // Route::get('/products/top-products')
     Route::apiResource('bundles', BundleController::class);
     // Accept POST /bundles/{bundle}/update as an alternative to PUT
 Route::post('bundles/{bundle}/update', [BundleController::class, 'update'])
      ->name('bundles.update.post');
+    Route::delete('bundles/{bundle}/featured-image', [BundleController::class, 'destroyFeaturedImage']);
+    Route::delete('bundles/{bundle}/images/{image}', [BundleController::class, 'destroyGalleryImage']);
 
     // Bundle Materials Management
     Route::get('bundles/{bundleId}/materials', [BundleMaterialController::class, 'index']);

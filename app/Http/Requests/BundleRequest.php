@@ -18,7 +18,12 @@ class BundleRequest extends FormRequest
         return [
             'brand_id' => 'nullable|exists:brands,id',
             'title' => 'nullable|string|max:255',
-            'featured_image' => 'nullable|image|mimes:jpg,jpeg,png|max:3048',
+            'featured_image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120',
+            'images' => 'nullable|array',
+            'images.*' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120',
+            'remove_featured_image' => 'nullable|boolean',
+            'remove_image_ids' => 'nullable|array',
+            'remove_image_ids.*' => 'integer',
             'bundle_type' => 'nullable|string|max:255',
             'is_available' => 'nullable|boolean',
             'top_deal' => 'nullable|boolean',

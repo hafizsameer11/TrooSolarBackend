@@ -7,11 +7,13 @@ use App\Http\Requests\BundleRequest;
 use App\Support\BundlePricing;
 use App\Models\Bundles;
 use App\Models\BundleItems;
+use App\Models\BundleImage;
 use App\Models\BundleMaterial;
 use App\Models\BundleCustomAppliance;
 use App\Models\CustomService;
 use App\Models\Product;
 use App\Helpers\ResponseHelper;
+use App\Support\PublicMedia;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -34,7 +36,7 @@ public function index(Request $request)
 
         // If no query parameter => return all bundles
         if (empty($query)) {
-            $bundlesQuery = Bundles::with(['bundleItems.product.category', 'bundleMaterials.material.category', 'customServices', 'brand']);
+            $bundlesQuery = Bundles::with(['bundleItems.product.category', 'bundleMaterials.material.category', 'customServices', 'brand', 'images']);
             if (Schema::hasColumn('bundles', 'is_available') && !($includeUnavailable && $isAdmin)) {
                 $bundlesQuery->where('is_available', true);
             }
@@ -196,9 +198,9 @@ public function index(Request $request)
             $data = $request->validated();
 
             $featuredImagePath = null;
-        if ($request->hasFile('featured_image')) {
-            $featuredImagePath = $request->file('featured_image')->store('bundles', 'public');
-        }
+            if ($request->hasFile('featured_image')) {
+                $featuredImagePath = PublicMedia::store($request->file('featured_image'), 'bundles');
+            }
             // Calculate total from products
             $totalProductPrice = 0;
             if (!empty($data['items'])) {
@@ -335,8 +337,10 @@ public function index(Request $request)
                 }
             }
 
+            $this->syncBundleGalleryImages($bundle, $request);
+
             DB::commit();
-            $relations = ['bundleItems.product.category', 'customServices', 'bundleMaterials.material.category', 'brand'];
+            $relations = ['bundleItems.product.category', 'customServices', 'bundleMaterials.material.category', 'brand', 'images'];
             if (Schema::hasTable('bundle_custom_appliances')) {
                 $relations[] = 'customAppliances';
             }
@@ -481,19 +485,17 @@ public function index(Request $request)
                 return ResponseHelper::error('Bundle not found.', 404);
             }
 
-             // Handle featured image upload
-        if ($request->hasFile('featured_image')) {
-            // Delete old image if exists
-            if ($bundle->featured_image && Storage::disk('public')->exists($bundle->featured_image)) {
-                Storage::disk('public')->delete($bundle->featured_image);
+            if ($request->boolean('remove_featured_image')) {
+                PublicMedia::delete($bundle->featured_image);
+                $data['featured_image'] = null;
+            } elseif ($request->hasFile('featured_image')) {
+                PublicMedia::delete($bundle->featured_image);
+                $data['featured_image'] = PublicMedia::store($request->file('featured_image'), 'bundles');
+            } else {
+                unset($data['featured_image']); // Prevent accidental overwrite with null
             }
-
-            // Store new image
-            $path = $request->file('featured_image')->store('bundles', 'public');
-            $data['featured_image'] = $path;
-        } else {
-            unset($data['featured_image']); // Prevent accidental overwrite with null
-        }
+            $this->removeSelectedBundleGalleryImages($bundle, $request);
+            $this->syncBundleGalleryImages($bundle, $request);
             // Recalculate prices if not provided
             $totalProductPrice = 0;
             if (!empty($data['items'])) {
@@ -515,7 +517,7 @@ public function index(Request $request)
 
             $updatePayload = [
                 'title' => $data['title'] ?? $bundle->title,
-                'featured_image' => $data['featured_image'] ?? $bundle->featured_image,
+                'featured_image' => array_key_exists('featured_image', $data) ? $data['featured_image'] : $bundle->featured_image,
                 'bundle_type' => $data['bundle_type'] ?? $bundle->bundle_type,
                 'is_available' => array_key_exists('is_available', $data) ? (bool) $data['is_available'] : $bundle->is_available,
                 'product_model' => array_key_exists('product_model', $data) ? trim($data['product_model'] ?? '') : $bundle->product_model,
@@ -618,11 +620,11 @@ public function index(Request $request)
             }
 
             DB::commit();
-            $updateRelations = ['bundleItems.product.category', 'customServices', 'bundleMaterials.material.category', 'brand'];
+            $updateRelations = ['bundleItems.product.category', 'customServices', 'bundleMaterials.material.category', 'brand', 'images'];
             if (Schema::hasTable('bundle_custom_appliances')) {
                 $updateRelations[] = 'customAppliances';
             }
-            $bundle->loadMissing($updateRelations);
+            $bundle->load($updateRelations);
 
             return ResponseHelper::success(
                 $this->formatBundleResponse($bundle),
@@ -697,6 +699,13 @@ public function index(Request $request)
             'title' => $bundle->title,
             'featured_image' => $bundle->featured_image,
             'featured_image_url' => $bundle->featured_image_url,
+            'images' => ($bundle->relationLoaded('images') ? $bundle->images : collect())->map(function ($img) {
+                return [
+                    'id' => $img->id,
+                    'image' => $img->image,
+                    'image_url' => $img->image_url,
+                ];
+            })->values(),
             'bundle_type' => $bundle->bundle_type,
             'is_available' => $bundle->is_available,
             'top_deal' => (bool) ($bundle->top_deal ?? false),
@@ -735,9 +744,14 @@ public function index(Request $request)
     public function destroy($id)
     {
         try {
-            $bundle = Bundles::find($id);
+            $bundle = Bundles::with('images')->find($id);
             if (!$bundle) {
                 return ResponseHelper::error('Bundle not found.', 404);
+            }
+
+            PublicMedia::delete($bundle->featured_image);
+            foreach ($bundle->images as $img) {
+                PublicMedia::delete($img->image);
             }
 
             $bundle->delete();
@@ -745,6 +759,83 @@ public function index(Request $request)
         } catch (Exception $e) {
             Log::error('Error deleting bundle: ' . $e->getMessage());
             return ResponseHelper::error('Failed to delete bundle.', 500);
+        }
+    }
+
+    public function destroyFeaturedImage($id)
+    {
+        try {
+            $bundle = Bundles::find($id);
+            if (! $bundle) {
+                return ResponseHelper::error('Bundle not found.', 404);
+            }
+            PublicMedia::delete($bundle->featured_image);
+            $bundle->featured_image = null;
+            $bundle->save();
+
+            return ResponseHelper::success(
+                $this->formatBundleResponse($bundle->load(['images', 'brand'])),
+                'Featured image removed.'
+            );
+        } catch (Exception $e) {
+            return ResponseHelper::error('Failed to remove featured image.', 500, $e->getMessage());
+        }
+    }
+
+    public function destroyGalleryImage($bundleId, $imageId)
+    {
+        try {
+            $bundle = Bundles::find($bundleId);
+            if (! $bundle) {
+                return ResponseHelper::error('Bundle not found.', 404);
+            }
+            $image = $bundle->images()->where('id', $imageId)->first();
+            if (! $image) {
+                return ResponseHelper::error('Image not found.', 404);
+            }
+            PublicMedia::delete($image->image);
+            $image->delete();
+
+            return ResponseHelper::success(
+                $this->formatBundleResponse($bundle->load(['images', 'brand'])),
+                'Gallery image removed.'
+            );
+        } catch (Exception $e) {
+            return ResponseHelper::error('Failed to remove gallery image.', 500, $e->getMessage());
+        }
+    }
+
+    private function syncBundleGalleryImages(Bundles $bundle, Request $request): void
+    {
+        if (! Schema::hasTable('bundle_images') || ! $request->hasFile('images')) {
+            return;
+        }
+        foreach ($request->file('images') as $file) {
+            if (! $file) {
+                continue;
+            }
+            $path = PublicMedia::store($file, 'bundles/gallery');
+            $bundle->images()->create(['image' => $path]);
+        }
+    }
+
+    private function removeSelectedBundleGalleryImages(Bundles $bundle, Request $request): void
+    {
+        if (! Schema::hasTable('bundle_images')) {
+            return;
+        }
+        $ids = $request->input('remove_image_ids', []);
+        if (! is_array($ids) || count($ids) === 0) {
+            return;
+        }
+        $ids = array_values(array_filter(array_map('intval', $ids)));
+        if (count($ids) === 0) {
+            return;
+        }
+        $bundle->loadMissing('images');
+        foreach ($bundle->images->whereIn('id', $ids) as $img) {
+            PublicMedia::delete($img->image);
+            $img->delete();
         }
     }
 
