@@ -36,7 +36,11 @@ public function index(Request $request)
 
         // If no query parameter => return all bundles
         if (empty($query)) {
-            $bundlesQuery = Bundles::with(['bundleItems.product.category', 'bundleMaterials.material.category', 'customServices', 'brand', 'images']);
+            $listRelations = ['bundleItems.product.category', 'bundleMaterials.material.category', 'customServices', 'brand'];
+            if (Schema::hasTable('bundle_images')) {
+                $listRelations[] = 'images';
+            }
+            $bundlesQuery = Bundles::with($listRelations);
             if (Schema::hasColumn('bundles', 'is_available') && !($includeUnavailable && $isAdmin)) {
                 $bundlesQuery->where('is_available', true);
             }
@@ -56,7 +60,11 @@ public function index(Request $request)
         $q = (float) $query;
 
         // Fetch all bundles with relations
-        $bundlesQuery = Bundles::with(['bundleItems.product.category', 'bundleMaterials.material.category', 'customServices', 'brand']);
+        $listRelations = ['bundleItems.product.category', 'bundleMaterials.material.category', 'customServices', 'brand'];
+        if (Schema::hasTable('bundle_images')) {
+            $listRelations[] = 'images';
+        }
+        $bundlesQuery = Bundles::with($listRelations);
         if (!empty($bundleType)) {
             $bundlesQuery->where('bundle_type', $bundleType);
         }
@@ -363,111 +371,27 @@ public function index(Request $request)
     public function show($id)
     {
         try {
-            $bundle = Bundles::with([
+            $relations = [
                 'bundleItems.product.category',
                 'customServices',
                 'bundleMaterials.material.category',
                 'customAppliances',
                 'brand',
-            ])->find($id);
-            
+            ];
+            if (Schema::hasTable('bundle_images')) {
+                $relations[] = 'images';
+            }
+
+            $bundle = Bundles::with($relations)->find($id);
+
             if (!$bundle) {
                 return ResponseHelper::error('Bundle not found.', 404);
             }
 
-            // Format bundle items (from products)
-            $bundleItems = $bundle->bundleItems->map(function ($item) {
-                return [
-                    'id' => $item->id,
-                    'product_id' => $item->product_id,
-                    'product' => $item->product ? [
-                        'id' => $item->product->id,
-                        'title' => $item->product->title,
-                        'price' => (float) ($item->product->price ?? 0),
-                        'discount_price' => $item->product->discount_price ? (float) $item->product->discount_price : null,
-                        'featured_image' => $item->product->featured_image_url ?? $item->product->featured_image ?? null,
-                        'category' => $item->product->category ? [
-                            'id' => $item->product->category->id,
-                            'title' => $item->product->category->title,
-                        ] : null,
-                    ] : null,
-                    'quantity' => $item->quantity ?? 1,
-                    'rate_override' => $item->rate_override !== null ? (float) $item->rate_override : null,
-                ];
-            });
-
-            // Format bundle materials (from materials table)
-            $bundleMaterials = $bundle->bundleMaterials->map(function ($bm) {
-                return [
-                    'id' => $bm->id,
-                    'material_id' => $bm->material_id,
-                    'material' => $bm->material ? [
-                        'id' => $bm->material->id,
-                        'name' => $bm->material->name,
-                        'unit' => $bm->material->unit,
-                        'rate' => (float) ($bm->material->rate ?? 0),
-                        'selling_rate' => (float) ($bm->material->selling_rate ?? 0),
-                        'warranty' => $bm->material->warranty,
-                        'category' => $bm->material->category ? [
-                            'id' => $bm->material->category->id,
-                            'name' => $bm->material->category->name,
-                            'code' => $bm->material->category->code,
-                        ] : null,
-                    ] : null,
-                    'quantity' => (float) ($bm->quantity ?? 1),
-                    'rate_override' => $bm->rate_override !== null ? (float) $bm->rate_override : null,
-                ];
-            });
-
-            // Format custom services
-            $customServices = $bundle->customServices->map(function ($service) {
-                return $this->serializeCustomServiceForApi($service);
-            });
-
-            // Format custom appliances
-            $customAppliances = $bundle->customAppliances->map(function ($a) {
-                return [
-                    'id' => $a->id,
-                    'bundle_id' => $a->bundle_id,
-                    'name' => $a->name,
-                    'wattage' => (float) $a->wattage,
-                    'quantity' => (int) ($a->quantity ?? 1),
-                    'estimated_daily_hours_usage' => $a->estimated_daily_hours_usage !== null ? (float) $a->estimated_daily_hours_usage : null,
-                ];
-            });
-
-            // Build response
-            $response = [
-                'id' => $bundle->id,
-                'brand_id' => $bundle->brand_id,
-                'brand' => $bundle->brand ? ['id' => $bundle->brand->id, 'title' => $bundle->brand->title] : null,
-                'title' => $bundle->title,
-                'featured_image' => $bundle->featured_image,
-                'bundle_type' => $bundle->bundle_type,
-                'is_available' => $bundle->is_available,
-                'total_price' => (float) ($bundle->total_price ?? 0),
-                'discount_price' => $bundle->discount_price ? (float) $bundle->discount_price : null,
-                'discount_end_date' => $bundle->discount_end_date,
-                'inver_rating' => $bundle->inver_rating,
-                'total_output' => $bundle->total_output,
-                'total_load' => $bundle->total_load,
-                'product_model' => $bundle->product_model,
-                'system_capacity_display' => $bundle->system_capacity_display,
-                'detailed_description' => $bundle->detailed_description,
-                'what_is_inside_bundle_text' => $bundle->what_is_inside_bundle_text,
-                'what_bundle_powers_text' => $bundle->what_bundle_powers_text,
-                'backup_time_description' => $bundle->backup_time_description,
-                'specifications' => $bundle->specifications ?? null,
-                'created_at' => $bundle->created_at?->toIso8601String(),
-                'updated_at' => $bundle->updated_at?->toIso8601String(),
-                'featured_image_url' => $bundle->featured_image_url,
-                'bundle_items' => $bundleItems,
-                'bundle_materials' => $bundleMaterials,
-                'custom_services' => $customServices,
-                'custom_appliances' => $customAppliances,
-            ];
-
-            return ResponseHelper::success($response, 'Bundle found.');
+            return ResponseHelper::success(
+                $this->formatBundleResponse($bundle),
+                'Bundle found.'
+            );
         } catch (Exception $e) {
             Log::error('Error fetching bundle: ' . $e->getMessage());
             return ResponseHelper::error('Failed to fetch bundle.', 500);
